@@ -17,6 +17,57 @@
 - Node.js not found or wrong version -- install Node.js >= 20
 - Port or resource conflict -- check if another instance is running with `/claude-to-im status`
 
+## Duplicate daemon instances
+
+**Symptoms**: restart appears to succeed, but messages still behave like old code; logs look inconsistent; multiple bridge processes exist at the same time.
+
+**Root cause**:
+- On Linux, older supervisor logic relied too heavily on `~/.claude-to-im/runtime/bridge.pid`
+- If that PID file became stale, was missing, or the daemon had been started outside the normal command path, `/claude-to-im start` could incorrectly assume nothing was running and launch another instance
+- Once two bridge daemons are alive, incoming messages may be handled by the older process, making recent code changes appear ineffective
+
+**Recommended restart procedure**:
+1. Run `/claude-to-im stop`
+2. Run `/claude-to-im start`
+3. Run `/claude-to-im status` and confirm there is exactly one running bridge
+4. If behavior still looks old, inspect recent logs with `/claude-to-im logs 200`
+
+**Current safeguard**:
+- The Linux supervisor now checks the real process list for `dist/daemon.mjs`, not just the PID file
+- `stop` now terminates all matching bridge daemon processes before clearing the PID file
+- This means `stop` + `start` is the preferred explicit restart flow, and `start` is now much less likely to create duplicate instances even if the PID file is wrong
+
+## Local core changes not taking effect
+
+**Symptoms**: You changed files in `../BuddyBridge`, but bridge behavior still looks old.
+
+**Root cause**:
+- `BuddyBridge-skill` defaults to a GitHub dependency (`github:dwf89044485/BuddyBridge`)
+- If you did not switch to local dependency mode, the running daemon won't consume your local core edits
+
+**Fix**:
+
+1. In `BuddyBridge-skill`, switch dependency to local core:
+   ```bash
+   npm run core:local:install
+   ```
+2. Verify source mode:
+   ```bash
+   npm run core:status
+   ```
+   Make sure it reports `Active mode: local`
+3. Restart daemon to reload bundle and runtime:
+   ```bash
+   /claude-to-im stop
+   /claude-to-im start
+   ```
+
+**Release reminder**:
+- Before publishing the skill, switch back to fork dependency:
+  ```bash
+  npm run core:fork:install
+  ```
+
 ## Messages not received
 
 **Symptoms**: Bot is online but doesn't respond to messages.

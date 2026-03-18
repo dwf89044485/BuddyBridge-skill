@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CTI_HOME="$HOME/.claude-to-im"
+CTI_HOME="${CTI_HOME:-$HOME/.claude-to-im}"
 CONFIG_FILE="$CTI_HOME/config.env"
 PID_FILE="$CTI_HOME/runtime/bridge.pid"
 LOG_FILE="$CTI_HOME/logs/bridge.log"
@@ -33,7 +33,9 @@ else
 fi
 
 # --- Helper: read a value from config.env ---
-get_config() { grep "^$1=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//'; }
+get_config() {
+  grep "^$1=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//' || true
+}
 
 # --- Read runtime setting ---
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -213,6 +215,51 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
       check "Claude SDK cli.js exists (not found — run 'npm install' in $SKILL_DIR)" 1
     else
       check "Claude SDK cli.js exists (not found — OK for auto/codex mode)" 0
+    fi
+  fi
+fi
+
+# --- CodeBuddy checks (codebuddy/codebuddysdk modes) ---
+if [ "$CTI_RUNTIME" = "codebuddy" ] || [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
+  CODEBUDDY_PATH=""
+  CTI_CODEBUDDY_EXECUTABLE=$(get_config CTI_CODEBUDDY_EXECUTABLE)
+
+  if [ -n "$CTI_CODEBUDDY_EXECUTABLE" ]; then
+    if [ -x "$CTI_CODEBUDDY_EXECUTABLE" ]; then
+      CODEBUDDY_PATH="$CTI_CODEBUDDY_EXECUTABLE"
+    else
+      check "CodeBuddy CLI available (${CTI_CODEBUDDY_EXECUTABLE} is not executable)" 1
+    fi
+  fi
+
+  if [ -z "$CODEBUDDY_PATH" ]; then
+    if command -v codebuddy &>/dev/null; then
+      CODEBUDDY_PATH=$(command -v codebuddy)
+    elif command -v cbc &>/dev/null; then
+      CODEBUDDY_PATH=$(command -v cbc)
+    fi
+  fi
+
+  if [ -n "$CODEBUDDY_PATH" ]; then
+    CODEBUDDY_VER=$($CODEBUDDY_PATH --version 2>/dev/null || echo "unknown")
+    CODEBUDDY_HELP=$($CODEBUDDY_PATH --help 2>&1 || true)
+    if echo "$CODEBUDDY_HELP" | grep -q -- '--output-format' && \
+       echo "$CODEBUDDY_HELP" | grep -q -- '--permission-mode' && \
+       echo "$CODEBUDDY_HELP" | grep -q -- '--print'; then
+      check "CodeBuddy CLI compatible (${CODEBUDDY_VER} at ${CODEBUDDY_PATH})" 0
+    else
+      check "CodeBuddy CLI compatible (${CODEBUDDY_VER} at ${CODEBUDDY_PATH} — missing required flags)" 1
+    fi
+  else
+    check "CodeBuddy CLI available (not found in PATH)" 1
+  fi
+
+  if [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
+    CODEBUDDY_SDK="$SKILL_DIR/node_modules/@tencent-ai/agent-sdk"
+    if [ -d "$CODEBUDDY_SDK" ]; then
+      check "@tencent-ai/agent-sdk installed" 0
+    else
+      check "@tencent-ai/agent-sdk installed (not found — run 'npm install' in $SKILL_DIR)" 1
     fi
   fi
 fi

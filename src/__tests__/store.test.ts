@@ -7,7 +7,6 @@ import { CTI_HOME } from '../config.js';
 
 const DATA_DIR = path.join(CTI_HOME, 'data');
 
-// We construct the store with a settings map directly
 function makeSettings(): Map<string, string> {
   return new Map([
     ['remote_bridge_enabled', 'true'],
@@ -19,7 +18,6 @@ function makeSettings(): Map<string, string> {
 
 describe('JsonFileStore', () => {
   beforeEach(() => {
-    // Clean data dir before each test for isolation
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
@@ -47,7 +45,7 @@ describe('JsonFileStore', () => {
     assert.equal(store.getSession('nonexistent'), null);
   });
 
-  it('upsertChannelBinding creates and updates', () => {
+  it('upsertChannelBinding creates and updates within same scope', () => {
     const store = new JsonFileStore(makeSettings());
     const b1 = store.upsertChannelBinding({
       channelType: 'telegram',
@@ -59,8 +57,9 @@ describe('JsonFileStore', () => {
     assert.ok(b1.id);
     assert.equal(b1.channelType, 'telegram');
     assert.equal(b1.chatId, '123');
+    assert.equal(b1.scopeKey, 'telegram:chat:123');
+    assert.deepEqual(b1.scopeChain, [{ kind: 'chat', id: '123' }]);
 
-    // Upsert same channel+chat should update
     const b2 = store.upsertChannelBinding({
       channelType: 'telegram',
       chatId: '123',
@@ -70,20 +69,54 @@ describe('JsonFileStore', () => {
     });
     assert.equal(b2.id, b1.id);
     assert.equal(b2.codepilotSessionId, 'sess-2');
+    assert.equal(b2.scopeKey, 'telegram:chat:123');
+  });
+
+  it('upsertChannelBinding stores separate bindings for narrower scopes in the same chat', () => {
+    const store = new JsonFileStore(makeSettings());
+    const channelBinding = store.upsertChannelBinding({
+      channelType: 'discord',
+      chatId: 'thread-1',
+      scopeKey: 'discord:channel:chan-1',
+      scopeChain: [
+        { kind: 'guild', id: 'guild-1' },
+        { kind: 'channel', id: 'chan-1' },
+      ],
+      codepilotSessionId: 'sess-channel',
+      workingDirectory: '/tmp',
+      model: 'model-1',
+    });
+    const threadBinding = store.upsertChannelBinding({
+      channelType: 'discord',
+      chatId: 'thread-1',
+      scopeKey: 'discord:thread:thread-1',
+      scopeChain: [
+        { kind: 'guild', id: 'guild-1' },
+        { kind: 'channel', id: 'chan-1' },
+        { kind: 'thread', id: 'thread-1' },
+      ],
+      codepilotSessionId: 'sess-thread',
+      workingDirectory: '/tmp/thread',
+      model: 'model-2',
+    });
+
+    assert.notEqual(channelBinding.id, threadBinding.id);
+    assert.equal(store.getChannelBinding('discord', 'thread-1', 'discord:channel:chan-1')?.codepilotSessionId, 'sess-channel');
+    assert.equal(store.getChannelBinding('discord', 'thread-1', 'discord:thread:thread-1')?.codepilotSessionId, 'sess-thread');
   });
 
   it('upsertChannelBinding uses default mode from settings', () => {
     const settings = makeSettings();
     settings.set('bridge_default_mode', 'plan');
     const store = new JsonFileStore(settings);
-    const b = store.upsertChannelBinding({
+    const binding = store.upsertChannelBinding({
       channelType: 'telegram',
       chatId: '456',
       codepilotSessionId: 'sess-1',
       workingDirectory: '/tmp',
       model: 'model-1',
     });
-    assert.equal(b.mode, 'plan');
+    assert.equal(binding.mode, 'plan');
   });
 
   it('getChannelBinding returns null for missing', () => {
@@ -112,6 +145,68 @@ describe('JsonFileStore', () => {
     assert.equal(store.listChannelBindings().length, 2);
   });
 
+  it('upsertScopedSystemPrompt creates and updates prompts', () => {
+    const store = new JsonFileStore(makeSettings());
+    const created = store.upsertScopedSystemPrompt({
+      scopeKey: 'discord:channel:chan-1',
+      channelType: 'discord',
+      scopeType: 'channel',
+      prompt: '频道规则',
+    });
+    assert.ok(created.id);
+    assert.equal(store.getScopedSystemPrompt('discord:channel:chan-1')?.prompt, '频道规则');
+
+    const updated = store.upsertScopedSystemPrompt({
+      scopeKey: 'discord:channel:chan-1',
+      channelType: 'discord',
+      scopeType: 'channel',
+      prompt: '频道规则-v2',
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(store.getScopedSystemPrompt('discord:channel:chan-1')?.prompt, '频道规则-v2');
+  });
+
+  it('listScopedSystemPrompts includes global and channel-specific prompts', () => {
+    const store = new JsonFileStore(makeSettings());
+    store.upsertScopedSystemPrompt({
+      scopeKey: 'global',
+      channelType: 'global',
+      scopeType: 'global',
+      prompt: '全局',
+    });
+    store.upsertScopedSystemPrompt({
+      scopeKey: 'platform:discord',
+      channelType: 'discord',
+      scopeType: 'platform',
+      prompt: '平台',
+    });
+    store.upsertScopedSystemPrompt({
+      scopeKey: 'feishu:chat:chat-1',
+      channelType: 'feishu',
+      scopeType: 'chat',
+      prompt: '飞书群组',
+    });
+
+    const discordPrompts = store.listScopedSystemPrompts('discord');
+    assert.equal(discordPrompts.length, 2);
+    assert.ok(discordPrompts.some((item) => item.scopeKey === 'global'));
+    assert.ok(discordPrompts.some((item) => item.scopeKey === 'platform:discord'));
+  });
+
+  it('deleteScopedSystemPrompt removes an existing scoped prompt', () => {
+    const store = new JsonFileStore(makeSettings());
+    store.upsertScopedSystemPrompt({
+      scopeKey: 'discord:thread:thread-1',
+      channelType: 'discord',
+      scopeType: 'thread',
+      prompt: '线程规则',
+    });
+
+    assert.equal(store.deleteScopedSystemPrompt('discord:thread:thread-1'), true);
+    assert.equal(store.getScopedSystemPrompt('discord:thread:thread-1'), null);
+    assert.equal(store.deleteScopedSystemPrompt('discord:thread:thread-1'), false);
+  });
+
   it('addMessage and getMessages', () => {
     const store = new JsonFileStore(makeSettings());
     const session = store.createSession('test', 'model', undefined, '/tmp');
@@ -136,8 +231,6 @@ describe('JsonFileStore', () => {
     assert.equal(messages[0].content, 'msg2');
     assert.equal(messages[1].content, 'msg3');
   });
-
-  // ── Session Locking ──
 
   it('acquireSessionLock succeeds on first call', () => {
     const store = new JsonFileStore(makeSettings());
@@ -165,14 +258,10 @@ describe('JsonFileStore', () => {
 
   it('expired lock can be re-acquired', async () => {
     const store = new JsonFileStore(makeSettings());
-    // Acquire with very short TTL
     store.acquireSessionLock('sess', 'lock1', 'owner1', 0);
-    // Should be expired immediately
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(store.acquireSessionLock('sess', 'lock2', 'owner2', 60));
   });
-
-  // ── Permission Links ──
 
   it('insertPermissionLink and getPermissionLink', () => {
     const store = new JsonFileStore(makeSettings());
@@ -186,8 +275,8 @@ describe('JsonFileStore', () => {
     });
     const link = store.getPermissionLink('pr-1');
     assert.ok(link);
-    assert.equal(link.permissionRequestId, 'pr-1');
-    assert.equal(link.resolved, false);
+    assert.equal(link?.permissionRequestId, 'pr-1');
+    assert.equal(link?.resolved, false);
   });
 
   it('markPermissionLinkResolved is atomic', () => {
@@ -201,9 +290,7 @@ describe('JsonFileStore', () => {
       suggestions: '',
     });
     assert.ok(store.markPermissionLinkResolved('pr-2'));
-    // Second call returns false (already resolved)
     assert.equal(store.markPermissionLinkResolved('pr-2'), false);
-    // Unknown id returns false
     assert.equal(store.markPermissionLinkResolved('unknown'), false);
   });
 
@@ -233,20 +320,15 @@ describe('JsonFileStore', () => {
       toolName: 'Bash',
       suggestions: '',
     });
-    // Resolve one
     store.markPermissionLinkResolved('pr-a');
     const pending = store.listPendingPermissionLinksByChat('chat-1');
     assert.equal(pending.length, 1);
     assert.equal(pending[0].permissionRequestId, 'pr-b');
-    // Different chat
     const pending2 = store.listPendingPermissionLinksByChat('chat-2');
     assert.equal(pending2.length, 1);
     assert.equal(pending2[0].permissionRequestId, 'pr-c');
-    // No permissions for unknown chat
     assert.equal(store.listPendingPermissionLinksByChat('chat-unknown').length, 0);
   });
-
-  // ── Dedup ──
 
   it('dedup insert and check within window', () => {
     const store = new JsonFileStore(makeSettings());
@@ -258,12 +340,9 @@ describe('JsonFileStore', () => {
   it('cleanupExpiredDedup removes old entries', () => {
     const store = new JsonFileStore(makeSettings());
     store.insertDedup('key1');
-    // The entry was just inserted so it shouldn't be expired
     store.cleanupExpiredDedup();
     assert.equal(store.checkDedup('key1'), true);
   });
-
-  // ── Audit Log ──
 
   it('insertAuditLog keeps max 1000', () => {
     const store = new JsonFileStore(makeSettings());
@@ -276,10 +355,7 @@ describe('JsonFileStore', () => {
         summary: `msg ${i}`,
       });
     }
-    // We can't directly inspect length, but it shouldn't crash
   });
-
-  // ── Channel Offsets ──
 
   it('getChannelOffset returns default for unknown key', () => {
     const store = new JsonFileStore(makeSettings());
@@ -291,8 +367,6 @@ describe('JsonFileStore', () => {
     store.setChannelOffset('tg:offset', '12345');
     assert.equal(store.getChannelOffset('tg:offset'), '12345');
   });
-
-  // ── SDK Session ──
 
   it('updateSdkSessionId updates session and bindings', () => {
     const store = new JsonFileStore(makeSettings());
@@ -316,8 +390,6 @@ describe('JsonFileStore', () => {
     const updated = store.getSession(session.id);
     assert.equal(updated?.model, 'model-new');
   });
-
-  // ── Provider (no-op) ──
 
   it('getProvider returns undefined', () => {
     const store = new JsonFileStore(makeSettings());

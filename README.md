@@ -34,6 +34,7 @@ Claude Code / Codex → reads/writes your codebase
 
 - **Node.js >= 20**
 - **Claude Code CLI** (for `CTI_RUNTIME=claude` or `auto`) — installed and authenticated (`claude` command available)
+- **CodeBuddy CLI** (for `CTI_RUNTIME=codebuddy` or `auto`) — installed and executable (`codebuddy`, with `cbc` fallback)
 - **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
 
 ## Installation
@@ -241,6 +242,32 @@ See [references/troubleshooting.md](references/troubleshooting.md) for more deta
 - See [SECURITY.md](SECURITY.md) for threat model and incident response
 
 ## Development
+
+### Core source switching (single source of truth)
+
+Default publish-time dependency:
+`claude-to-im -> github:dwf89044485/BuddyBridge`
+
+Use local core repo during development:
+
+```bash
+npm run core:local:install
+```
+
+Check current dependency source:
+
+```bash
+npm run core:status
+```
+
+Switch back to publish-time dependency (required before release):
+
+```bash
+npm run core:fork:install
+```
+
+This keeps core logic maintained in one place (`../BuddyBridge`) during local iteration,
+while preserving a reproducible GitHub dependency for external users.
 
 ```bash
 npm install        # Install dependencies

@@ -192,6 +192,57 @@ case "${1:-help}" in
     fi
     ;;
 
+  restart)
+    echo "Restarting bridge..."
+    # Stop if running
+    if supervisor_is_managed; then
+      supervisor_stop
+    else
+      PID=$(read_pid)
+      if [ -n "$PID" ] && pid_alive "$PID"; then
+        kill "$PID"
+        for _ in $(seq 1 10); do
+          pid_alive "$PID" || break
+          sleep 1
+        done
+        pid_alive "$PID" && kill -9 "$PID"
+      fi
+      rm -f "$PID_FILE"
+    fi
+    # Wait for process to fully terminate
+    sleep 1
+    # Start
+    ensure_dirs
+    ensure_built
+    [ -f "$CTI_HOME/config.env" ] && set -a && source "$CTI_HOME/config.env" && set +a
+    clean_env
+    supervisor_start
+    # Poll for up to 10 seconds waiting for status.json to report running
+    STARTED=false
+    for _ in $(seq 1 10); do
+      sleep 1
+      if status_running; then
+        STARTED=true
+        break
+      fi
+      if ! supervisor_is_running; then
+        break
+      fi
+    done
+    if [ "$STARTED" = "true" ]; then
+      NEW_PID=$(read_pid)
+      echo "Bridge restarted${NEW_PID:+ (PID: $NEW_PID)}"
+      cat "$STATUS_FILE" 2>/dev/null
+    else
+      echo "Failed to restart bridge."
+      supervisor_is_running || echo "  Process not running."
+      status_running || echo "  status.json not reporting running=true."
+      show_last_exit_reason
+      show_failure_help
+      exit 1
+    fi
+    ;;
+
   status)
     # Platform-specific status info (prints launchd/service state)
     supervisor_status_extra
@@ -220,6 +271,6 @@ case "${1:-help}" in
     ;;
 
   *)
-    echo "Usage: daemon.sh {start|stop|status|logs [N]}"
+    echo "Usage: daemon.sh {start|stop|restart|status|logs [N]}"
     ;;
 esac

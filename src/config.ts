@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 export interface Config {
-  runtime: 'claude' | 'codex' | 'auto';
+  runtime: 'claude' | 'codex' | 'codebuddy' | 'codebuddysdk' | 'auto';
   enabledChannels: string[];
   defaultWorkDir: string;
   defaultModel?: string;
@@ -17,6 +17,9 @@ export interface Config {
   feishuAppSecret?: string;
   feishuDomain?: string;
   feishuAllowedUsers?: string[];
+  feishuGroupPolicy?: 'open' | 'disabled' | 'allowlist';
+  feishuGroupAllowFrom?: string[];
+  feishuRequireMention?: boolean;
   // Discord
   discordBotToken?: string;
   discordAllowedUsers?: string[];
@@ -64,6 +67,14 @@ function splitCsv(value: string | undefined): string[] | undefined {
     .filter(Boolean);
 }
 
+function parseFeishuGroupPolicy(value: string | undefined): Config['feishuGroupPolicy'] {
+  if (!value) return undefined;
+  if (value === 'open' || value === 'disabled' || value === 'allowlist') {
+    return value;
+  }
+  return undefined;
+}
+
 export function loadConfig(): Config {
   let env = new Map<string, string>();
   try {
@@ -74,7 +85,7 @@ export function loadConfig(): Config {
   }
 
   const rawRuntime = env.get("CTI_RUNTIME") || "claude";
-  const runtime = (["claude", "codex", "auto"].includes(rawRuntime) ? rawRuntime : "claude") as Config["runtime"];
+  const runtime = (["claude", "codex", "codebuddy", "codebuddysdk", "auto"].includes(rawRuntime) ? rawRuntime : "claude") as Config["runtime"];
 
   return {
     runtime,
@@ -89,6 +100,11 @@ export function loadConfig(): Config {
     feishuAppSecret: env.get("CTI_FEISHU_APP_SECRET") || undefined,
     feishuDomain: env.get("CTI_FEISHU_DOMAIN") || undefined,
     feishuAllowedUsers: splitCsv(env.get("CTI_FEISHU_ALLOWED_USERS")),
+    feishuGroupPolicy: parseFeishuGroupPolicy(env.get("CTI_FEISHU_GROUP_POLICY")),
+    feishuGroupAllowFrom: splitCsv(env.get("CTI_FEISHU_GROUP_ALLOW_FROM")),
+    feishuRequireMention: env.has("CTI_FEISHU_REQUIRE_MENTION")
+      ? env.get("CTI_FEISHU_REQUIRE_MENTION") === "true"
+      : undefined,
     discordBotToken: env.get("CTI_DISCORD_BOT_TOKEN") || undefined,
     discordAllowedUsers: splitCsv(env.get("CTI_DISCORD_ALLOWED_USERS")),
     discordAllowedChannels: splitCsv(
@@ -136,6 +152,13 @@ export function saveConfig(config: Config): void {
     "CTI_FEISHU_ALLOWED_USERS",
     config.feishuAllowedUsers?.join(",")
   );
+  out += formatEnvLine("CTI_FEISHU_GROUP_POLICY", config.feishuGroupPolicy);
+  out += formatEnvLine(
+    "CTI_FEISHU_GROUP_ALLOW_FROM",
+    config.feishuGroupAllowFrom?.join(",")
+  );
+  if (config.feishuRequireMention !== undefined)
+    out += formatEnvLine("CTI_FEISHU_REQUIRE_MENTION", String(config.feishuRequireMention));
   out += formatEnvLine("CTI_DISCORD_BOT_TOKEN", config.discordBotToken);
   out += formatEnvLine(
     "CTI_DISCORD_ALLOWED_USERS",
@@ -212,7 +235,9 @@ export function configToSettings(config: Config): Map<string, string> {
 
   // ── Feishu ──
   // Upstream keys: bridge_feishu_app_id, bridge_feishu_app_secret,
-  //   bridge_feishu_domain, bridge_feishu_enabled, bridge_feishu_allowed_users
+  //   bridge_feishu_domain, bridge_feishu_enabled, bridge_feishu_allowed_users,
+  //   bridge_feishu_group_policy, bridge_feishu_group_allow_from,
+  //   bridge_feishu_require_mention
   m.set(
     "bridge_feishu_enabled",
     config.enabledChannels.includes("feishu") ? "true" : "false"
@@ -223,6 +248,12 @@ export function configToSettings(config: Config): Map<string, string> {
   if (config.feishuDomain) m.set("bridge_feishu_domain", config.feishuDomain);
   if (config.feishuAllowedUsers)
     m.set("bridge_feishu_allowed_users", config.feishuAllowedUsers.join(","));
+  if (config.feishuGroupPolicy)
+    m.set("bridge_feishu_group_policy", config.feishuGroupPolicy);
+  if (config.feishuGroupAllowFrom)
+    m.set("bridge_feishu_group_allow_from", config.feishuGroupAllowFrom.join(","));
+  if (config.feishuRequireMention !== undefined)
+    m.set("bridge_feishu_require_mention", String(config.feishuRequireMention));
 
   // ── QQ ──
   // Upstream keys: bridge_qq_enabled, bridge_qq_app_id, bridge_qq_app_secret,

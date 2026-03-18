@@ -16,6 +16,7 @@ import path from 'node:path';
 
 import type { LLMProvider, StreamChatParams } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from './permission-gateway.js';
+import { appendLocalAttachmentSystemNote } from './file-attachment-prompt.js';
 import { sseEvent } from './sse-utils.js';
 
 /** MIME → file extension for temp image files. */
@@ -66,6 +67,37 @@ function shouldRetryFreshThread(message: string): boolean {
     lower.includes('no such session') ||
     (lower.includes('resume') && lower.includes('session'))
   );
+}
+
+function buildCodexInput(params: StreamChatParams, tempFiles: string[]): string | Array<Record<string, string>> {
+  const files = params.files ?? [];
+  if (files.length === 0) {
+    return params.prompt;
+  }
+
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+  const nonImageFiles = files.filter((file) => !file.type.startsWith('image/'));
+  const promptText = nonImageFiles.length > 0
+    ? appendLocalAttachmentSystemNote(params.prompt, nonImageFiles)
+    : params.prompt;
+
+  if (imageFiles.length === 0) {
+    return promptText;
+  }
+
+  const parts: Array<Record<string, string>> = [
+    { type: 'text', text: promptText },
+  ];
+
+  for (const file of imageFiles) {
+    const ext = MIME_EXT[file.type] || '.png';
+    const tmpPath = path.join(os.tmpdir(), `cti-img-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    fs.writeFileSync(tmpPath, Buffer.from(file.data, 'base64'));
+    tempFiles.push(tmpPath);
+    parts.push({ type: 'local_image', path: tmpPath });
+  }
+
+  return parts;
 }
 
 export class CodexProvider implements LLMProvider {
@@ -142,29 +174,7 @@ export class CodexProvider implements LLMProvider {
               approvalPolicy,
             };
 
-            // Build input: Codex SDK UserInput supports { type: "text" } and
-            // { type: "local_image", path: string }. We write base64 data to
-            // temp files so the SDK can read them as local images.
-            const imageFiles = params.files?.filter(
-              f => f.type.startsWith('image/')
-            ) ?? [];
-
-            let input: string | Array<Record<string, string>>;
-            if (imageFiles.length > 0) {
-              const parts: Array<Record<string, string>> = [
-                { type: 'text', text: params.prompt },
-              ];
-              for (const file of imageFiles) {
-                const ext = MIME_EXT[file.type] || '.png';
-                const tmpPath = path.join(os.tmpdir(), `cti-img-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-                fs.writeFileSync(tmpPath, Buffer.from(file.data, 'base64'));
-                tempFiles.push(tmpPath);
-                parts.push({ type: 'local_image', path: tmpPath });
-              }
-              input = parts;
-            } else {
-              input = params.prompt;
-            }
+            const input = buildCodexInput(params, tempFiles);
 
             let retryFresh = false;
 

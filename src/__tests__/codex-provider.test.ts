@@ -392,6 +392,95 @@ function makeFile(type: string, data: string, name = 'test-file') {
 }
 
 describe('CodexProvider image input', () => {
+  it('passes local file instructions when only non-image attachments are present', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    let capturedInput: unknown;
+    const mockThread = {
+      runStreamed: (input: unknown) => {
+        capturedInput = input;
+        return {
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: { input_tokens: 0, output_tokens: 0 } };
+          })(),
+        };
+      },
+    };
+    (provider as any).sdk = {
+      Codex: class { constructor() {} },
+    };
+    (provider as any).codex = {
+      startThread: () => mockThread,
+    };
+
+    const stream = provider.streamChat({
+      prompt: '请阅读这个文件',
+      sessionId: 'file-only-session',
+      files: [
+        {
+          ...makeFile('application/pdf', 'cGRm', '需求.pdf'),
+          filePath: '/tmp/uploads/需求.pdf',
+        },
+      ],
+    });
+
+    await collectStream(stream);
+
+    assert.equal(typeof capturedInput, 'string');
+    assert.match(capturedInput as string, /The user attached 1 file\(s\) that have been saved into the working directory for you\./);
+    assert.match(capturedInput as string, /Path: "\/tmp\/uploads\/需求\.pdf"/);
+  });
+
+  it('keeps local file instructions in text part when images and files are mixed', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    let capturedInput: unknown;
+    const mockThread = {
+      runStreamed: (input: unknown) => {
+        capturedInput = input;
+        return {
+          events: (async function* () {
+            yield { type: 'turn.completed', usage: { input_tokens: 0, output_tokens: 0 } };
+          })(),
+        };
+      },
+    };
+    (provider as any).sdk = {
+      Codex: class { constructor() {} },
+    };
+    (provider as any).codex = {
+      startThread: () => mockThread,
+    };
+
+    const stream = provider.streamChat({
+      prompt: '先看图，再看文件',
+      sessionId: 'mixed-attachments-session',
+      files: [
+        {
+          ...makeFile('image/png', 'cG5n', '示意图.png'),
+        },
+        {
+          ...makeFile('text/plain', 'dGV4dA==', '说明.txt'),
+          filePath: '/tmp/uploads/说明.txt',
+        },
+      ],
+    });
+
+    await collectStream(stream);
+
+    assert.ok(Array.isArray(capturedInput), 'Mixed image+file input should be multimodal');
+    const parts = capturedInput as Array<Record<string, string>>;
+    assert.equal(parts[0].type, 'text');
+    assert.match(parts[0].text, /先看图，再看文件/);
+    assert.match(parts[0].text, /The user attached 1 file\(s\) that have been saved into the working directory for you\./);
+    assert.match(parts[0].text, /Path: "\/tmp\/uploads\/说明\.txt"/);
+    assert.equal(parts[1].type, 'local_image');
+  });
+
   it('builds local_image input array for text+image', async () => {
     const { CodexProvider } = await import('../codex-provider.js');
     const { PendingPermissions } = await import('../permission-gateway.js');

@@ -82,11 +82,17 @@ describe('configToSettings', () => {
       feishuAppSecret: 'app-secret',
       feishuDomain: 'example.com',
       feishuAllowedUsers: ['fu1'],
+      feishuGroupPolicy: 'allowlist',
+      feishuGroupAllowFrom: ['oc_a', 'oc_b'],
+      feishuRequireMention: false,
     });
     assert.equal(m.get('bridge_feishu_app_id'), 'app-id');
     assert.equal(m.get('bridge_feishu_app_secret'), 'app-secret');
     assert.equal(m.get('bridge_feishu_domain'), 'example.com');
     assert.equal(m.get('bridge_feishu_allowed_users'), 'fu1');
+    assert.equal(m.get('bridge_feishu_group_policy'), 'allowlist');
+    assert.equal(m.get('bridge_feishu_group_allow_from'), 'oc_a,oc_b');
+    assert.equal(m.get('bridge_feishu_require_mention'), 'false');
   });
 
   it('sets bridge_qq_enabled based on enabledChannels', () => {
@@ -161,6 +167,9 @@ describe('configToSettings', () => {
     assert.equal(m.has('telegram_bot_token'), false);
     assert.equal(m.has('bridge_discord_bot_token'), false);
     assert.equal(m.has('bridge_feishu_app_id'), false);
+    assert.equal(m.has('bridge_feishu_group_policy'), false);
+    assert.equal(m.has('bridge_feishu_group_allow_from'), false);
+    assert.equal(m.has('bridge_feishu_require_mention'), false);
   });
 });
 

@@ -34,6 +34,7 @@ Claude Code / Codex → 读写你的代码库
 
 - **Node.js >= 20**
 - **Claude Code CLI**（`CTI_RUNTIME=claude` 或 `auto` 时需要）— 已安装并完成认证（`claude` 命令可用）
+- **CodeBuddy CLI**（`CTI_RUNTIME=codebuddy` 或 `auto` 时需要）— 已安装并可执行（默认命令 `codebuddy`，兼容 `cbc`）
 - **Codex CLI**（`CTI_RUNTIME=codex` 或 `auto` 时需要）— `npm install -g @openai/codex`。鉴权：运行 `codex auth login`，或设置 `OPENAI_API_KEY`（可选，API 模式）
 
 ## 安装
@@ -241,6 +242,32 @@ bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh --link
 - 详见 [SECURITY.md](SECURITY.md) 了解威胁模型和应急响应
 
 ## 开发
+
+### 核心库真源切换（结构整改后）
+
+默认发布态依赖：`claude-to-im -> github:dwf89044485/BuddyBridge`
+
+本地联调核心库（推荐用于开发）：
+
+```bash
+npm run core:local:install
+```
+
+查看当前依赖来源：
+
+```bash
+npm run core:status
+```
+
+切回发布态依赖（发版前必须执行）：
+
+```bash
+npm run core:fork:install
+```
+
+这套流程用于保证：
+- 开发时 `BuddyBridge-skill` 直接吃本地 `../BuddyBridge` 改动，实现核心逻辑只维护一份
+- 发布前能回到 fork 依赖，确保别人安装 skill 时拿到可用版本
 
 ```bash
 npm install        # 安装依赖

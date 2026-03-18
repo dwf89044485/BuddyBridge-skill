@@ -127,6 +127,13 @@ export function buildSubprocessEnv(): Record<string, string> {
         if (v !== undefined && (k.startsWith('OPENAI_') || k.startsWith('CODEX_'))) out[k] = v;
       }
     }
+
+    // In codebuddy runtime, pass through CODEBUDDY_* env vars
+    if (runtime === 'codebuddy' || runtime === 'codebuddysdk') {
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined && k.startsWith('CODEBUDDY_')) out[k] = v;
+      }
+    }
   }
 
   return out;

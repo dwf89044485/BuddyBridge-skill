@@ -6,10 +6,10 @@ description: |
   or diagnosing the claude-to-im bridge daemon; forwarding Claude replies to a messaging
   app; any phrase like "claude-to-im", "bridge", "消息推送", "消息转发", "桥接",
   "连上飞书", "手机上看claude", "启动后台服务", "诊断", "查看日志", "配置".
-  Subcommands: setup, start, stop, status, logs, reconfigure, doctor.
+  Subcommands: setup, start, stop, restart, status, logs, reconfigure, doctor.
   Do NOT use for: building standalone bots, webhook integrations, or coding with IM
   platform SDKs — those are regular programming tasks.
-argument-hint: "setup | start | stop | status | logs [N] | reconfigure | doctor"
+argument-hint: "setup | start | stop | restart | status | logs [N] | reconfigure | doctor"
 allowed-tools:
   - Bash
   - Read
@@ -37,6 +37,7 @@ Parse the user's intent from `$ARGUMENTS` into one of these subcommands:
 | `setup`, `configure`, `配置`, `我想在飞书上用 Claude`, `帮我连接 Telegram` | setup |
 | `start`, `start bridge`, `启动`, `启动桥接` | start |
 | `stop`, `stop bridge`, `停止`, `停止桥接` | stop |
+| `restart`, `restart bridge`, `重启`, `重启桥接` | restart |
 | `status`, `bridge status`, `状态`, `运行状态`, `怎么看桥接的运行状态` | status |
 | `logs`, `logs 200`, `查看日志`, `查看日志 200` | logs |
 | `reconfigure`, `修改配置`, `帮我改一下 token`, `换个 bot` | reconfigure |
@@ -57,7 +58,7 @@ Before executing any subcommand, detect which environment you are running in:
 
 You can test this by checking if AskUserQuestion is in your available tools list.
 
-## Config check (applies to `start`, `stop`, `status`, `logs`, `reconfigure`, `doctor`)
+## Config check (applies to `start`, `stop`, `restart`, `status`, `logs`, `reconfigure`, `doctor`)
 
 Before running any subcommand other than `setup`, check if `~/.claude-to-im/config.env` exists:
 
@@ -134,9 +135,22 @@ Show the output to the user. If it fails, tell the user:
 
 Run: `bash "SKILL_DIR/scripts/daemon.sh" stop`
 
+### `restart`
+
+Run: `bash "SKILL_DIR/scripts/daemon.sh" restart`
+
+Stops the bridge if running, then starts it again. Useful for applying configuration changes without manually running stop then start.
+
 ### `status`
 
 Run: `bash "SKILL_DIR/scripts/daemon.sh" status`
+
+**Important:** Only output what the command returns. Do NOT add any derived or inferred information such as:
+- "模型配置" or model configuration
+- Workspace type (OpenClaw, etc.)
+- Any other context from MEMORY.md or AGENTS.md
+
+The status output contains only: running state, PID, runId, startedAt, channels, lastExitReason.
 
 ### `logs`
 
@@ -151,7 +165,7 @@ Run: `bash "SKILL_DIR/scripts/daemon.sh" logs N`
 4. When collecting new values, read `SKILL_DIR/references/setup-guides.md` and present the relevant guide for that field
 5. Update the config file atomically (write to tmp, rename)
 6. Re-validate any changed tokens
-7. Remind user: "Run `/claude-to-im stop` then `/claude-to-im start` to apply the changes."
+7. Remind user: "Run `/claude-to-im restart` to apply the changes."
 
 ### `doctor`
 
