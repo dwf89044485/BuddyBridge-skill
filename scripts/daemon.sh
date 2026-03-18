@@ -2,6 +2,7 @@
 set -euo pipefail
 CTI_HOME="${CTI_HOME:-$HOME/.claude-to-im}"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CORE_DIR="$(cd "$SKILL_DIR/../BuddyBridge" 2>/dev/null && pwd || true)"
 PID_FILE="$CTI_HOME/runtime/bridge.pid"
 STATUS_FILE="$CTI_HOME/runtime/status.json"
 LOG_FILE="$CTI_HOME/logs/bridge.log"
@@ -10,7 +11,33 @@ LOG_FILE="$CTI_HOME/logs/bridge.log"
 
 ensure_dirs() { mkdir -p "$CTI_HOME"/{data,logs,runtime,data/messages}; }
 
+ensure_core_built() {
+  if [ -z "$CORE_DIR" ] || [ ! -f "$CORE_DIR/package.json" ] || [ ! -d "$CORE_DIR/src" ]; then
+    return
+  fi
+
+  local core_entry="$CORE_DIR/dist/lib/bridge/context.js"
+  local need_build=0
+
+  if [ ! -f "$core_entry" ]; then
+    need_build=1
+  else
+    local newest_core_src
+    newest_core_src=$(find "$CORE_DIR/src" -name '*.ts' -newer "$core_entry" 2>/dev/null | head -1)
+    if [ -n "$newest_core_src" ]; then
+      need_build=1
+    fi
+  fi
+
+  if [ "$need_build" = "1" ]; then
+    echo "Building core bridge package..."
+    (cd "$CORE_DIR" && npm run build)
+  fi
+}
+
 ensure_built() {
+  ensure_core_built
+
   local need_build=0
   if [ ! -f "$SKILL_DIR/dist/daemon.mjs" ]; then
     need_build=1
@@ -20,6 +47,14 @@ ensure_built() {
     newest_src=$(find "$SKILL_DIR/src" -name '*.ts' -newer "$SKILL_DIR/dist/daemon.mjs" 2>/dev/null | head -1)
     if [ -n "$newest_src" ]; then
       need_build=1
+    fi
+    # Also check if the local BuddyBridge dist was updated — its code is bundled into dist
+    if [ "$need_build" = "0" ] && [ -n "$CORE_DIR" ] && [ -d "$CORE_DIR/dist" ]; then
+      local newest_core_dist
+      newest_core_dist=$(find "$CORE_DIR/dist" -name '*.js' -newer "$SKILL_DIR/dist/daemon.mjs" 2>/dev/null | head -1)
+      if [ -n "$newest_core_dist" ]; then
+        need_build=1
+      fi
     fi
     # Also check if node_modules/claude-to-im was updated (npm update)
     # — its code is bundled into dist, so changes require a rebuild
@@ -37,7 +72,6 @@ ensure_built() {
   fi
 }
 
-# Clean environment for subprocess isolation.
 clean_env() {
   unset CLAUDECODE 2>/dev/null || true
 
