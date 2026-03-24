@@ -88,8 +88,8 @@ export function loadConfig(): Config {
     // Config file doesn't exist yet — use defaults
   }
 
-  const rawRuntime = env.get("CTI_RUNTIME") || "claude";
-  const runtime = (["claude", "codex", "codebuddy", "codebuddysdk", "persistent-claude", "auto"].includes(rawRuntime) ? rawRuntime : "claude") as Config["runtime"];
+  const rawRuntime = env.get("CTI_RUNTIME") || "persistent-claude";
+  const runtime = (["claude", "codex", "codebuddy", "codebuddysdk", "persistent-claude", "auto"].includes(rawRuntime) ? rawRuntime : "persistent-claude") as Config["runtime"];
 
   return {
     runtime,
