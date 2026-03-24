@@ -189,10 +189,13 @@ export class PersistentClaudeProvider implements LLMProvider {
               pending.resolve = () => {
                 clearInterval(keepAliveTimer);
                 origResolve();
+                // Close the controller so the reader gets done: true
+                try { controller.close(); } catch { /* already closed */ }
                 resolve();
               };
             } else {
               clearInterval(keepAliveTimer);
+              try { controller.close(); } catch { /* already closed */ }
               resolve();
             }
           });
@@ -246,10 +249,44 @@ export interface PreflightResult {
 import { execSync } from 'node:child_process';
 
 /**
+ * Find a claude CLI without version gating.
+ * Unlike resolveClaudeCliPath() which requires >= 2.x, this finds any
+ * claude executable that supports the required stream-json flags.
+ */
+function resolveCliPathForPersistent(): string | undefined {
+  // 1. Explicit env var
+  const fromEnv = process.env.CTI_CLAUDE_CODE_EXECUTABLE;
+  if (fromEnv) {
+    try { execSync(`"${fromEnv}" --version`, { stdio: 'ignore', timeout: 5000 }); return fromEnv; }
+    catch { /* not executable */ }
+  }
+
+  // 2. PATH discovery (claude command)
+  try {
+    const which = execSync('which claude', { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (which) return which;
+  } catch { /* which not found */ }
+
+  // 3. Well-known locations
+  const candidates = [
+    `${process.env.HOME}/.local/bin/claude`,
+    `${process.env.HOME}/.claude/local/claude`,
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+  ];
+  for (const p of candidates) {
+    try { execSync(`"${p}" --version`, { stdio: 'ignore', timeout: 5000 }); return p; }
+    catch { /* not found or not executable */ }
+  }
+
+  return undefined;
+}
+
+/**
  * Check if the Claude CLI supports --input-format stream-json.
  */
 export function preflightPersistentCheck(cliPath?: string): PreflightResult {
-  const path = cliPath || resolvePersistentCliPath();
+  const path = cliPath || resolveCliPathForPersistent();
   if (!path) {
     return { ok: false, error: 'Claude CLI not found' };
   }
@@ -262,14 +299,13 @@ export function preflightPersistentCheck(cliPath?: string): PreflightResult {
 
     // Check for --input-format flag support
     const hasInputFormat = stdout.includes('--input-format');
-    const hasStreamJson = stdout.includes('stream-json');
     const hasOutputFormat = stdout.includes('--output-format');
 
-    if (!hasInputFormat || !hasOutputFormat || !hasStreamJson) {
+    if (!hasInputFormat || !hasOutputFormat) {
       return {
         ok: false,
         cliPath: path,
-        error: `Claude CLI does not support --input-format stream-json. Update Claude Code CLI.`,
+        error: `Claude CLI at "${path}" missing required flags (--input-format, --output-format).`,
       };
     }
 

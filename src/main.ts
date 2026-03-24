@@ -97,46 +97,38 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
   }
 
   if (runtime === 'persistent-claude') {
-    const cliPath = resolveClaudeCliPath();
-    if (!cliPath) {
-      console.error(
-        '[claude-to-im] FATAL: Cannot find the `claude` CLI executable for persistent mode.\n' +
-        '  Fix: Install Claude Code CLI or set CTI_CLAUDE_CODE_EXECUTABLE=/path/to/claude',
-      );
-      process.exit(1);
-    }
-
-    const check = preflightPersistentCheck(cliPath);
+    const check = preflightPersistentCheck();
     if (!check.ok) {
       console.error(
         `[claude-to-im] FATAL: Persistent Claude preflight check failed.\n` +
-        `  Path: ${cliPath}\n` +
         `  Error: ${check.error}\n` +
-        `  Fix: Update Claude Code CLI to a version that supports --input-format stream-json`,
+        `  Fix: Install Claude Code CLI or set CTI_CLAUDE_CODE_EXECUTABLE=/path/to/claude`,
       );
       process.exit(1);
     }
 
-    console.log(`[claude-to-im] Persistent Claude preflight OK: ${cliPath} (${check.version})`);
+    console.log(`[claude-to-im] Persistent Claude preflight OK: ${check.cliPath} (${check.version})`);
     const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
-    return new PersistentClaudeProvider(pendingPerms, cliPath);
+    return new PersistentClaudeProvider(pendingPerms, check.cliPath);
   }
 
   if (runtime === 'auto') {
     // Try persistent Claude first (fastest for multi-turn sessions)
-    const claudeCliPath = resolveClaudeCliPath();
-    if (claudeCliPath) {
-      const persistentCheck = preflightPersistentCheck(claudeCliPath);
-      if (persistentCheck.ok) {
-        console.log(`[claude-to-im] Auto: using persistent Claude at ${claudeCliPath} (${persistentCheck.version})`);
-        const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
-        return new PersistentClaudeProvider(pendingPerms, claudeCliPath);
-      }
+    const persistentCheck = preflightPersistentCheck();
+    if (persistentCheck.ok) {
+      console.log(`[claude-to-im] Auto: using persistent Claude at ${persistentCheck.cliPath} (${persistentCheck.version})`);
+      const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
+      return new PersistentClaudeProvider(pendingPerms, persistentCheck.cliPath);
+    }
+    if (persistentCheck.cliPath) {
       console.warn(
-        `[claude-to-im] Auto: Persistent Claude at ${claudeCliPath} failed preflight: ${persistentCheck.error}\n` +
+        `[claude-to-im] Auto: Persistent Claude at ${persistentCheck.cliPath} failed preflight: ${persistentCheck.error}\n` +
         '  Falling through to Claude SDK.',
       );
     }
+
+    // Fall through to Claude SDK (version-gated)
+    const claudeCliPath = resolveClaudeCliPath();
     if (claudeCliPath) {
       const check = preflightCheck(claudeCliPath);
       if (check.ok) {

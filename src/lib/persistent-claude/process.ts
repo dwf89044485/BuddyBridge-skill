@@ -19,12 +19,10 @@ import type {
   CliControlRequest,
   CliControlResponse,
 } from './types.js';
-import { buildSubprocessEnv, resolveClaudeCliPath } from '../../llm-provider.js';
+import { buildSubprocessEnv } from '../../llm-provider.js';
 
 // ── Constants ──────────────────────────────────────────────────
 
-const HANDSHAKE_TIMEOUT_MS = 15_000;
-const INIT_RESPONSE_TIMEOUT_MS = 10_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const MAX_STDERR_BUF = 4096;
 
@@ -50,11 +48,6 @@ export class PersistentProcess {
   // Control request handling (CLI → SDK)
   private controlRequestCounter = 0;
 
-  // Handshake
-  private handshakeResolve: (() => void) | null = null;
-  private handshakeReject: ((err: Error) => void) | null = null;
-  private initRequestId: string | null = null;
-
   // Streams
   private ndjson = new NdjsonParser();
   private stderrBuf = '';
@@ -74,8 +67,10 @@ export class PersistentProcess {
   // ── Lifecycle ───────────────────────────────────────────────
 
   /**
-   * Spawn the CLI subprocess and complete the initialization handshake.
-   * Resolves when the process is in 'ready' state.
+   * Spawn the CLI subprocess and set up I/O handlers.
+   * The process is ready to receive messages immediately.
+   * claude-internal sends system/init after receiving the first user message,
+   * so we don't wait for handshake here — it's handled lazily in handleMessage.
    */
   async connect(options: Partial<PersistentProcessOptions>): Promise<void> {
     if (this.state !== 'dead') {
@@ -90,7 +85,10 @@ export class PersistentProcess {
     delete env.CLAUDECODE;
 
     // Build CLI args for stream-json bidirectional mode
+    // -p (--print) is required by claude-internal for --input-format;
+    // it's harmless for official Claude Code CLI too.
     const args = [
+      '-p',
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--verbose',
@@ -141,19 +139,10 @@ export class PersistentProcess {
       }
     });
 
-    // Wait for system/init
-    this.state = 'handshake';
-    await this.waitForHandshake();
-
-    // Send initialize control request
-    this.state = 'handshake'; // still in handshake
-    await this.sendInitialize(options.systemPrompt);
-
-    // If resuming a previous session, the CLI already has context.
-    // The session_id from system/init is what we'll use going forward.
+    // Ready immediately — system/init will arrive lazily after first message
     this.state = 'ready';
     console.log(
-      `[persistent] Ready: session=${this.sdkSessionId}, model=${this.model}, pid=${proc.pid}`,
+      `[persistent] Started: pid=${proc.pid}, cwd=${cwd}`,
     );
   }
 
@@ -291,47 +280,6 @@ export class PersistentProcess {
       && this.proc?.exitCode === null;
   }
 
-  // ── Internal: handshake ──────────────────────────────────────
-
-  private waitForHandshake(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.handshakeResolve = resolve;
-      const timer = setTimeout(() => {
-        this.handshakeResolve = null;
-        this.handshakeReject = null;
-        reject(new Error('Handshake timeout: no system/init received'));
-      }, HANDSHAKE_TIMEOUT_MS);
-
-      // Override resolve to clear timer
-      const origResolve = resolve;
-      this.handshakeResolve = () => {
-        clearTimeout(timer);
-        origResolve();
-      };
-    });
-  }
-
-  private async sendInitialize(systemPrompt?: string): Promise<void> {
-    const requestId = this.nextRequestId();
-    this.initRequestId = requestId;
-
-    const request: Record<string, unknown> = {
-      subtype: 'initialize',
-    };
-    // We don't have hooks or agents in the bridge context,
-    // but sending an empty initialize is required by the protocol.
-    if (systemPrompt) {
-      // Can't set system prompt via initialize in the current protocol.
-      // It should be passed as a CLI arg during spawn.
-    }
-
-    await this.writeControlRequest(requestId, request);
-
-    // Wait for control_response(success)
-    await this.waitForControlResponse(requestId, INIT_RESPONSE_TIMEOUT_MS);
-    this.initRequestId = null;
-  }
-
   // ── Internal: control protocol ───────────────────────────────
 
   private nextRequestId(): string {
@@ -441,23 +389,11 @@ export class PersistentProcess {
       this.sdkSessionId = (msg as { session_id?: string }).session_id || null;
       this.model = (msg as { model?: string }).model || null;
       console.log(`[persistent] system/init: session=${this.sdkSessionId}, model=${this.model}`);
-
-      // Complete the handshake wait
-      if (this.state === 'handshake' && this.handshakeResolve) {
-        this.handshakeResolve();
-        this.handshakeResolve = null;
-        this.handshakeReject = null;
-      }
     }
   }
 
   private handleControlResponse(msg: CliControlResponse): void {
-    // If this is the init response during handshake, it's handled
-    // by waitForControlResponse. Otherwise, log it.
     const reqId = msg.response?.request_id;
-    if (reqId === this.initRequestId) {
-      return; // Handled by sendInitialize's waitForControlResponse
-    }
     if (reqId) {
       console.log(`[persistent] control_response: ${reqId} → ${msg.response?.subtype}`);
     }
@@ -574,13 +510,6 @@ export class PersistentProcess {
 
     // Reject pending response
     this.rejectPendingResponse(err || new Error('Process crashed'));
-
-    // Clear handshake if waiting
-    if (this.handshakeReject) {
-      this.handshakeReject(err || new Error('Process crashed during handshake'));
-      this.handshakeResolve = null;
-      this.handshakeReject = null;
-    }
 
     console.error(`[persistent] Process crashed (was ${prevState}):`, err.message);
   }
@@ -757,8 +686,29 @@ function normalizeToolResultContent(content: unknown): string {
 }
 
 /**
- * Find the Claude CLI binary path.
+ * Find the Claude CLI binary path (no version gating).
+ * Checks env var, PATH, and well-known locations.
  */
 export function resolvePersistentCliPath(): string | undefined {
-  return resolveClaudeCliPath();
+  const { execSync } = require('node:child_process') as typeof import('node:child_process');
+  const fromEnv = process.env.CTI_CLAUDE_CODE_EXECUTABLE;
+  if (fromEnv) {
+    try { execSync(`"${fromEnv}" --version`, { stdio: 'ignore', timeout: 5000 }); return fromEnv; }
+    catch { /* not executable */ }
+  }
+  try {
+    const which = execSync('which claude', { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (which) return which;
+  } catch { /* not found */ }
+  const candidates = [
+    `${process.env.HOME}/.local/bin/claude`,
+    `${process.env.HOME}/.claude/local/claude`,
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+  ];
+  for (const p of candidates) {
+    try { execSync(`"${p}" --version`, { stdio: 'ignore', timeout: 5000 }); return p; }
+    catch { /* not found */ }
+  }
+  return undefined;
 }
