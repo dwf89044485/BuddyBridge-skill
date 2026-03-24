@@ -20,6 +20,7 @@ import type { Config } from './config.js';
 import { JsonFileStore } from './store.js';
 import { SDKLLMProvider, resolveClaudeCliPath, preflightCheck } from './llm-provider.js';
 import { resolveCodeBuddyCliPath, preflightCodeBuddyCheck } from './codebuddy-provider.js';
+import { preflightPersistentCheck, shutdownPersistentPool } from './lib/persistent-claude/index.js';
 import { PendingPermissions } from './permission-gateway.js';
 import { setupLogger } from './logger.js';
 
@@ -33,7 +34,7 @@ const PID_FILE = path.join(RUNTIME_DIR, 'bridge.pid');
  * - 'codex': uses @openai/codex-sdk via CodexProvider
  * - 'codebuddy': uses the local CodeBuddy CLI via CodeBuddyProvider
  * - 'codebuddysdk': uses @tencent-ai/agent-sdk via CodeBuddySDKProvider
- * - 'auto': tries Claude first, then CodeBuddy SDK, then CodeBuddy CLI, then falls back to Codex
+ * - 'persistent-claude': uses persistent Claude CLI subprocess (keeps process alive)
  */
 async function resolveProvider(config: Config, pendingPerms: PendingPermissions): Promise<LLMProvider> {
   const runtime = config.runtime;
@@ -95,8 +96,47 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
     return new CodeBuddySDKProvider(pendingPerms, cliPath, config.autoApprove);
   }
 
+  if (runtime === 'persistent-claude') {
+    const cliPath = resolveClaudeCliPath();
+    if (!cliPath) {
+      console.error(
+        '[claude-to-im] FATAL: Cannot find the `claude` CLI executable for persistent mode.\n' +
+        '  Fix: Install Claude Code CLI or set CTI_CLAUDE_CODE_EXECUTABLE=/path/to/claude',
+      );
+      process.exit(1);
+    }
+
+    const check = preflightPersistentCheck(cliPath);
+    if (!check.ok) {
+      console.error(
+        `[claude-to-im] FATAL: Persistent Claude preflight check failed.\n` +
+        `  Path: ${cliPath}\n` +
+        `  Error: ${check.error}\n` +
+        `  Fix: Update Claude Code CLI to a version that supports --input-format stream-json`,
+      );
+      process.exit(1);
+    }
+
+    console.log(`[claude-to-im] Persistent Claude preflight OK: ${cliPath} (${check.version})`);
+    const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
+    return new PersistentClaudeProvider(pendingPerms, cliPath);
+  }
+
   if (runtime === 'auto') {
+    // Try persistent Claude first (fastest for multi-turn sessions)
     const claudeCliPath = resolveClaudeCliPath();
+    if (claudeCliPath) {
+      const persistentCheck = preflightPersistentCheck(claudeCliPath);
+      if (persistentCheck.ok) {
+        console.log(`[claude-to-im] Auto: using persistent Claude at ${claudeCliPath} (${persistentCheck.version})`);
+        const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
+        return new PersistentClaudeProvider(pendingPerms, claudeCliPath);
+      }
+      console.warn(
+        `[claude-to-im] Auto: Persistent Claude at ${claudeCliPath} failed preflight: ${persistentCheck.error}\n` +
+        '  Falling through to Claude SDK.',
+      );
+    }
     if (claudeCliPath) {
       const check = preflightCheck(claudeCliPath);
       if (check.ok) {
@@ -254,6 +294,7 @@ async function main(): Promise<void> {
     console.log(`[claude-to-im] Shutting down (${reason})...`);
     pendingPerms.denyAll();
     await bridgeManager.stop();
+    await shutdownPersistentPool();
     writeStatus({ running: false, lastExitReason: reason });
     process.exit(0);
   };
