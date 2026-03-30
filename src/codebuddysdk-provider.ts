@@ -8,14 +8,65 @@ import { resolveCodeBuddyCliPath } from './codebuddy-provider.js';
 import { sseEvent } from './sse-utils.js';
 import { appendLocalAttachmentSystemNote, splitLocalAttachments } from './file-attachment-prompt.js';
 
-type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+// ── Auth/credential-error detection ──
+
+/** Patterns indicating the CLI is not logged in. */
+const CLI_AUTH_PATTERNS = [
+  /not logged in/i,
+  /please run \/login/i,
+  /loggedIn['":\s]*false/i,
+];
+
+/**
+ * Patterns indicating an API-level credential failure (wrong key, expired token, quota).
+ * Specific enough to avoid matching local file permissions or generic HTTP 403s.
+ */
+const API_AUTH_PATTERNS = [
+  /unauthorized/i,
+  /invalid.*api.?key/i,
+  /authentication.*failed/i,
+  /does not have access/i,
+  /401\b/,
+];
+
+/** Patterns indicating a quota / rate-limit issue. */
+const QUOTA_PATTERNS = [
+  /quota/i,
+  /rate.?limit/i,
+  /insufficient.*quota/i,
+  /too many requests/i,
+];
+
+export type CodeBuddyAuthErrorKind = 'cli' | 'api' | 'quota' | false;
+
+/**
+ * Classify an error message as a CLI login issue, an API credential issue,
+ * a quota problem, or neither.
+ */
+export function classifyCodeBuddyAuthError(text: string): CodeBuddyAuthErrorKind {
+  if (CLI_AUTH_PATTERNS.some(re => re.test(text))) return 'cli';
+  if (API_AUTH_PATTERNS.some(re => re.test(text))) return 'api';
+  if (QUOTA_PATTERNS.some(re => re.test(text))) return 'quota';
+  return false;
+}
+
+const CLI_AUTH_USER_MESSAGE =
+  'CodeBuddy CLI is not logged in. Run `codebuddy auth login` (or check your credentials), then restart the bridge.';
+
+const API_AUTH_USER_MESSAGE =
+  'API credential error. Check your CODEBUDDY_* or API key configuration in config.env, ' +
+  'or verify your account has access to the requested model.';
+
+const QUOTA_USER_MESSAGE =
+  'Usage quota exceeded or rate limited. Check your plan limits and try again later.';
+
 
 const SUPPORTED_IMAGE_TYPES = new Set<string>([
   'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
 ]);
 
-function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' | 'dontAsk' {
-  if (permissionMode === 'acceptEdits' || permissionMode === 'plan' || permissionMode === 'dontAsk') {
+function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' {
+  if (permissionMode === 'acceptEdits' || permissionMode === 'plan' || permissionMode === 'dontAsk' || permissionMode === 'bypassPermissions') {
     return permissionMode;
   }
   return 'default';
@@ -71,7 +122,7 @@ function buildPrompt(
       type: 'image',
       source: {
         type: 'base64',
-        media_type: (file.type === 'image/jpg' ? 'image/jpeg' : file.type) as ImageMediaType,
+        media_type: (file.type === 'image/jpg' ? 'image/jpeg' : file.type) as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
         data: file.data,
       },
     });
@@ -92,17 +143,36 @@ function buildPrompt(
 }
 
 export interface CodeBuddySDKStreamState {
+  /** True once a `result` message (success or error subtype) has been processed. */
   hasReceivedResult: boolean;
+  /** True once any text_delta has been emitted via stream_event. */
+  hasStreamedText: boolean;
+  /**
+   * Full text captured from the final `assistant` message.
+   * NOT emitted during normal flow (stream_event deltas handle that).
+   * Used by the catch block to surface business errors.
+   */
   lastAssistantText: string;
 }
 
 export class CodeBuddySDKProvider implements LLMProvider {
-  constructor(private pendingPerms: PendingPermissions, private cliPath?: string, private autoApprove = false) {}
+  private cliPath: string | undefined;
+
+  constructor(
+    private pendingPerms: PendingPermissions,
+    cliPath?: string,
+    private autoApprove = false,
+  ) {
+    // Resolve CLI path once at construction time, not on every streamChat() call.
+    if (!cliPath) {
+      this.cliPath = resolveCodeBuddyCliPath();
+    }
+  }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
     const pendingPerms = this.pendingPerms;
     const autoApprove = this.autoApprove;
-    const cliPath = this.cliPath || resolveCodeBuddyCliPath();
+    const cliPath = this.cliPath;
 
     return new ReadableStream<string>({
       start(controller) {
@@ -111,6 +181,7 @@ export class CodeBuddySDKProvider implements LLMProvider {
           let stderrBuf = '';
           const state: CodeBuddySDKStreamState = {
             hasReceivedResult: false,
+            hasStreamedText: false,
             lastAssistantText: '',
           };
 
@@ -193,24 +264,55 @@ export class CodeBuddySDKProvider implements LLMProvider {
             }
 
             const isTransportExit = message.includes('process exited with code');
+
+            // ── Case 1: Result already received ──
+            // A trailing "process exited with code 1" is transport teardown noise.
             if (state.hasReceivedResult && isTransportExit) {
+              console.log('[codebuddysdk-provider] Suppressing transport error — result already received');
               controller.close();
               return;
             }
 
-            if (state.lastAssistantText && !isTransportExit) {
-              controller.enqueue(sseEvent('error', state.lastAssistantText));
+            // ── Case 2: Recognised auth/credential error in assistant text ──
+            // The CLI returned an assistant message with text that matches
+            // a known auth/quota error pattern. Forward as text — it's
+            // more informative than the generic transport error.
+            if (state.lastAssistantText && classifyCodeBuddyAuthError(state.lastAssistantText)) {
+              controller.enqueue(sseEvent('text', state.lastAssistantText));
               controller.close();
               return;
             }
 
-            if (isTransportExit && stderrBuf.trim()) {
-              controller.enqueue(
-                sseEvent('error', `${message}\n\nCLI stderr:\n${stderrBuf.trim().slice(-1024)}`),
+            // ── Case 3: Build user-facing error message ──
+            const authKind = classifyCodeBuddyAuthError(message) || classifyCodeBuddyAuthError(stderrBuf);
+            let userMessage: string;
+            if (authKind === 'cli') {
+              userMessage = CLI_AUTH_USER_MESSAGE;
+            } else if (authKind === 'api') {
+              userMessage = API_AUTH_USER_MESSAGE;
+            } else if (authKind === 'quota') {
+              userMessage = QUOTA_USER_MESSAGE;
+            } else if (isTransportExit) {
+              const stderrSummary = stderrBuf.trim();
+              const lines = [message];
+              if (stderrSummary) {
+                lines.push('', 'CLI stderr:', stderrSummary.slice(-1024));
+              }
+              lines.push(
+                '',
+                'Possible causes:',
+                '• CodeBuddy CLI not authenticated — check login status',
+                '• API key missing or expired — check config.env',
+                '• Model not available on current plan',
+                '',
+                'Run `/claude-to-im doctor` to diagnose.',
               );
+              userMessage = lines.join('\n');
             } else {
-              controller.enqueue(sseEvent('error', message));
+              userMessage = message;
             }
+
+            controller.enqueue(sseEvent('error', userMessage));
             controller.close();
           }
         })();
@@ -229,6 +331,7 @@ export function handleMessage(
       const event = msg.event;
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
         controller.enqueue(sseEvent('text', event.delta.text));
+        state.hasStreamedText = true;
       }
       if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
         controller.enqueue(
@@ -326,4 +429,5 @@ export const _testOnly = {
   buildPrompt,
   mapPermissionMode,
   normalizeToolResultContent,
+  classifyCodeBuddyAuthError,
 };

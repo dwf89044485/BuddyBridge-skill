@@ -176,3 +176,33 @@ describe('CodeBuddySDKProvider buildPrompt', () => {
     );
   });
 });
+
+describe('classifyCodeBuddyAuthError', () => {
+  const { classifyCodeBuddyAuthError } = _testOnly;
+
+  it('returns "cli" for not-logged-in patterns', () => {
+    assert.equal(classifyCodeBuddyAuthError('Error: not logged in. Please run /login'), 'cli');
+    assert.equal(classifyCodeBuddyAuthError('Error: loggedIn false'), 'cli');
+    assert.equal(classifyCodeBuddyAuthError("please run '/login' to authenticate"), 'cli');
+  });
+
+  it('returns "api" for credential/permission patterns', () => {
+    assert.equal(classifyCodeBuddyAuthError('unauthorized: invalid API key'), 'api');
+    assert.equal(classifyCodeBuddyAuthError('Authentication failed for request'), 'api');
+    assert.equal(classifyCodeBuddyAuthError('Your organization does not have access'), 'api');
+    assert.equal(classifyCodeBuddyAuthError('HTTP 401 Unauthorized'), 'api');
+  });
+
+  it('returns "quota" for rate-limit/quota patterns', () => {
+    assert.equal(classifyCodeBuddyAuthError('quota exceeded for this model'), 'quota');
+    assert.equal(classifyCodeBuddyAuthError('rate limit: too many requests'), 'quota');
+    assert.equal(classifyCodeBuddyAuthError('Insufficient quota remaining'), 'quota');
+    assert.equal(classifyCodeBuddyAuthError('Error: too many requests'), 'quota');
+  });
+
+  it('returns false for non-auth errors', () => {
+    assert.equal(classifyCodeBuddyAuthError('file not found: /tmp/foo.ts'), false);
+    assert.equal(classifyCodeBuddyAuthError('process exited with code 1'), false);
+    assert.equal(classifyCodeBuddyAuthError(''), false);
+  });
+});

@@ -92,14 +92,20 @@ export class PersistentProcess {
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--verbose',
-      '--permission-prompt-tool', 'stdio',
     ];
+
+    if (options.permissionPromptTool !== false) {
+      args.push('--permission-prompt-tool', 'stdio');
+    }
 
     if (options.permissionMode) {
       args.push('--permission-mode', options.permissionMode);
     }
     if (options.model) {
       args.push('--model', options.model);
+    }
+    if (options.systemPrompt?.trim()) {
+      args.push('--append-system-prompt', options.systemPrompt.trim());
     }
 
     // Spawn
@@ -423,11 +429,21 @@ export class PersistentProcess {
           break;
         }
 
-        case 'hook_callback':
-        case 'mcp_message':
-          // Not yet implemented — acknowledge with empty success
-          this.sendControlResponse(requestId, 'success', {});
+        case 'hook_callback': {
+          // Hook callbacks from CLI — pass through to a potential hook handler
+          // For now, just acknowledge success; providers can extend with actual handling
+          console.log(`[persistent] Hook callback: ${(msg.request as { hook_type?: string }).hook_type || 'unknown'}`);
+          this.sendControlResponse(requestId, 'success', { processed: true });
           break;
+        }
+
+        case 'mcp_message': {
+          // MCP (Model Context Protocol) messages from CLI
+          // For now, just acknowledge; full MCP support depends on upstream SDK
+          console.log(`[persistent] MCP message received`);
+          this.sendControlResponse(requestId, 'success', { processed: true });
+          break;
+        }
 
         default:
           console.warn(`[persistent] Unknown control_request subtype: ${subtype}`);

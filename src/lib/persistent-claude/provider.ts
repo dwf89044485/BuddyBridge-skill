@@ -7,12 +7,20 @@
  * Falls back to SDKLLMProvider (query() mode) on failure.
  */
 
-import type { LLMProvider, StreamChatParams } from 'claude-to-im/src/lib/bridge/host.js';
+import type { LLMProvider, StreamChatParams, FileAttachment } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from '../../permission-gateway.js';
 import { ProcessPool } from './process-pool.js';
 import { resolvePersistentCliPath } from './process.js';
 import type { FallbackTracker } from './types.js';
 import { DEFAULT_POOL_CONFIG } from './types.js';
+
+// ── Image support ───────────────────────────────────────────────
+
+const SUPPORTED_IMAGE_TYPES = new Set<string>([
+  'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
+]);
+
+type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 // ── Singleton pool ─────────────────────────────────────────────
 
@@ -62,16 +70,19 @@ function recordSuccess(sessionId: string): void {
 export class PersistentClaudeProvider implements LLMProvider {
   private pendingPerms: PendingPermissions;
   private cliPath: string | undefined;
+  private autoApprove: boolean;
 
-  constructor(pendingPerms: PendingPermissions, cliPath?: string) {
+  constructor(pendingPerms: PendingPermissions, cliPath?: string, autoApprove = false) {
     this.pendingPerms = pendingPerms;
     this.cliPath = cliPath;
+    this.autoApprove = autoApprove;
   }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
     const sessionId = params.sessionId;
     const pendingPerms = this.pendingPerms;
     const cliPath = this.cliPath;
+    const autoApprove = this.autoApprove;
 
     // Check if persistent mode is available for this session
     if (!shouldUsePersistent(sessionId)) {
@@ -118,6 +129,11 @@ export class PersistentClaudeProvider implements LLMProvider {
 
           // Wire up permission callback
           proc.onPermissionRequest = async (toolName, input, requestId) => {
+            // Auto-approve if configured
+            if (autoApprove) {
+              return { behavior: 'allow', updatedInput: input };
+            }
+
             // Emit permission_request SSE event to bridge
             controller.enqueue(
               `data: ${JSON.stringify({
@@ -156,10 +172,40 @@ export class PersistentClaudeProvider implements LLMProvider {
             },
           });
 
-          // Send the user prompt
-          const prompt = params.prompt || '';
-          if (prompt) {
-            proc.sendPrompt(prompt);
+          // Handle model change mid-session
+          const targetModel = params.model?.trim();
+          if (targetModel && proc.model && proc.model !== targetModel) {
+            console.log(`[persistent-claude] Model change detected: ${proc.model} -> ${targetModel}`);
+            await proc.setModel(targetModel).catch((err) => {
+              console.warn(`[persistent-claude] setModel failed: ${err.message}`);
+            });
+          }
+
+          // Send the user prompt (with multimodal support)
+          const imageFiles = (params.files ?? []).filter((f) => SUPPORTED_IMAGE_TYPES.has(f.type));
+          if (imageFiles.length > 0) {
+            // Build multimodal content blocks
+            const contentBlocks: unknown[] = [];
+            for (const file of imageFiles) {
+              contentBlocks.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: (file.type === 'image/jpg' ? 'image/jpeg' : file.type) as ImageMediaType,
+                  data: file.data,
+                },
+              });
+            }
+            const prompt = params.prompt || '';
+            if (prompt.trim()) {
+              contentBlocks.push({ type: 'text', text: prompt });
+            }
+            proc.sendUserMessage(contentBlocks);
+          } else {
+            const prompt = params.prompt || '';
+            if (prompt) {
+              proc.sendPrompt(prompt);
+            }
           }
 
           // Handle abort

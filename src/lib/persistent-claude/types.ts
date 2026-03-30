@@ -145,6 +145,8 @@ export interface PersistentProcessOptions {
   /** Session ID from a previous stream-json session to resume. */
   resumeSessionId?: string;
   abortController?: AbortController;
+  /** Whether to pass --permission-prompt-tool stdio (Claude-compatible only). */
+  permissionPromptTool?: boolean;
 }
 
 // ── Pending response (waiting for result after sending a prompt) ──

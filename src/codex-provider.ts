@@ -39,12 +39,14 @@ type ThreadInstance = any;
 /**
  * Map bridge permission modes to Codex approval policies.
  * - 'acceptEdits' (code mode) → 'on-failure' (auto-approve most things)
+ * - 'bypassPermissions' → 'full-auto' (auto-approve everything)
  * - 'plan' → 'on-request' (ask before executing)
  * - 'default' (ask mode) → 'on-request'
  */
 function toApprovalPolicy(permissionMode?: string): string {
   switch (permissionMode) {
     case 'acceptEdits': return 'on-failure';
+    case 'bypassPermissions': return 'full-auto';
     case 'plan': return 'on-request';
     case 'default': return 'on-request';
     default: return 'on-request';

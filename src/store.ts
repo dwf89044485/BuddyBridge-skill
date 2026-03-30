@@ -397,6 +397,7 @@ export class JsonFileStore implements BridgeStore {
         codepilotSessionId: data.codepilotSessionId,
         workingDirectory: data.workingDirectory,
         model: data.model,
+        runtime: data.runtime !== undefined ? data.runtime : existing.runtime,
         updatedAt: now(),
       };
       this.bindings.set(key, updated);
@@ -418,7 +419,8 @@ export class JsonFileStore implements BridgeStore {
       sdkSessionId: '',
       workingDirectory: data.workingDirectory,
       model: data.model,
-      mode: (this.settings.get('bridge_default_mode') as 'code' | 'plan' | 'ask') || 'code',
+      mode: (this.settings.get('bridge_default_mode') as 'code' | 'plan' | 'ask' | 'bypass') || 'code',
+      runtime: data.runtime,
       active: true,
       createdAt: now(),
       updatedAt: now(),

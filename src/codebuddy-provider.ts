@@ -5,7 +5,7 @@
  * then maps those events into the SSE stream format expected by the bridge.
  */
 
-import { execSync, spawn } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
@@ -45,17 +45,19 @@ interface CodeBuddyEvent {
 const REQUIRED_CODEBUDDY_FLAGS = ['--output-format', '--permission-mode', '--print', '--append-system-prompt'] as const;
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
 
+function buildCliEnv(): Record<string, string> {
+  const env = buildSubprocessEnv();
+  delete env.NODE_OPTIONS;
+  return env;
+}
+
 function isExecutable(path: string): boolean {
-  try {
-    execSync(`"${path}" --version`, {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      timeout: 5000,
-      env: buildSubprocessEnv(),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const res = spawnSync(path, ['--version'], {
+    stdio: ['ignore', 'ignore', 'ignore'],
+    timeout: 5000,
+    env: buildCliEnv(),
+  });
+  return !res.error && res.status === 0;
 }
 
 function findCommand(name: string): string[] {
@@ -64,7 +66,7 @@ function findCommand(name: string): string[] {
     return execSync(cmd, {
       encoding: 'utf-8',
       timeout: 3000,
-      env: buildSubprocessEnv(),
+      env: buildCliEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
     })
       .split('\n')
@@ -103,42 +105,58 @@ export function resolveCodeBuddyCliPath(): string | undefined {
 }
 
 export function preflightCodeBuddyCheck(cliPath: string): { ok: boolean; version?: string; error?: string } {
-  try {
-    const version = execSync(`"${cliPath}" --version`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-      env: buildSubprocessEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+  const env = buildCliEnv();
 
-    const help = execSync(`"${cliPath}" --help`, {
-      encoding: 'utf-8',
-      timeout: 10000,
-      env: buildSubprocessEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  const versionRes = spawnSync(cliPath, ['--version'], {
+    encoding: 'utf-8',
+    timeout: 30000,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
-    for (const flag of REQUIRED_CODEBUDDY_FLAGS) {
-      if (!help.includes(flag)) {
-        return {
-          ok: false,
-          version,
-          error: `CodeBuddy CLI is missing required flag ${flag}`,
-        };
-      }
-    }
-
-    return { ok: true, version };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+  if (versionRes.error) {
+    return { ok: false, error: versionRes.error.message };
   }
+  if (versionRes.status !== 0) {
+    return { ok: false, error: (versionRes.stderr || versionRes.stdout || `exit code ${versionRes.status}`).toString().trim() };
+  }
+  const version = (versionRes.stdout || '').toString().trim();
+
+  const helpRes = spawnSync(cliPath, ['--help'], {
+    encoding: 'utf-8',
+    timeout: 30000,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  if (helpRes.error) {
+    if (helpRes.error.message.includes('ETIMEDOUT')) {
+      // Some CodeBuddy builds may block on --help in daemon/non-interactive env.
+      // Keep startup available and validate flags at actual invocation time.
+      return { ok: true, version };
+    }
+    return { ok: false, version, error: helpRes.error.message };
+  }
+  if (helpRes.status !== 0) {
+    return { ok: false, version, error: (helpRes.stderr || helpRes.stdout || `exit code ${helpRes.status}`).toString().trim() };
+  }
+
+  const help = (helpRes.stdout || '').toString();
+  for (const flag of REQUIRED_CODEBUDDY_FLAGS) {
+    if (!help.includes(flag)) {
+      return {
+        ok: false,
+        version,
+        error: `CodeBuddy CLI is missing required flag ${flag}`,
+      };
+    }
+  }
+
+  return { ok: true, version };
 }
 
-function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' {
-  if (permissionMode === 'acceptEdits' || permissionMode === 'plan') {
+function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' {
+  if (permissionMode === 'acceptEdits' || permissionMode === 'plan' || permissionMode === 'bypassPermissions') {
     return permissionMode;
   }
   return 'default';
@@ -337,7 +355,7 @@ export class CodeBuddyProvider implements LLMProvider {
 
           const proc = spawn(cliPath, buildArgs(params, resumeSessionId), {
             cwd: params.workingDirectory,
-            env: buildSubprocessEnv(),
+            env: buildCliEnv(),
             stdio: ['ignore', 'pipe', 'pipe'],
           });
           child = proc;

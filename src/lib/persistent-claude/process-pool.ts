@@ -26,8 +26,17 @@ export class ProcessPool {
     const existing = this.processes.get(sessionId);
     if (existing && existing.isAlive && existing.state === 'ready') {
       existing.lastActivityAt = Date.now();
-      console.log(`[pool] Reusing existing process for session ${sessionId}`);
-      return existing;
+
+      const targetModel = options.model?.trim();
+      if (targetModel && existing.model && existing.model !== targetModel) {
+        console.log(`[pool] Model changed for session ${sessionId} (${existing.model} -> ${targetModel}), reusing process and letting provider switch model`);
+      }
+
+      const stillExisting = this.processes.get(sessionId);
+      if (stillExisting && stillExisting.isAlive && stillExisting.state === 'ready') {
+        console.log(`[pool] Reusing existing process for session ${sessionId}`);
+        return stillExisting;
+      }
     }
 
     // Clean up dead entry if any

@@ -21,6 +21,7 @@ import { JsonFileStore } from './store.js';
 import { SDKLLMProvider, resolveClaudeCliPath, preflightCheck } from './llm-provider.js';
 import { resolveCodeBuddyCliPath, preflightCodeBuddyCheck } from './codebuddy-provider.js';
 import { preflightPersistentCheck, shutdownPersistentPool } from './lib/persistent-claude/index.js';
+import { preflightPersistentCodeBuddyCheck, shutdownPersistentCodeBuddyPool } from './lib/persistent-codebuddy/index.js';
 import { PendingPermissions } from './permission-gateway.js';
 import { setupLogger } from './logger.js';
 
@@ -91,6 +92,20 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
       process.exit(1);
     }
 
+    const persistentCheck = preflightPersistentCodeBuddyCheck(cliPath);
+    if (persistentCheck.ok && process.env.CTI_PERSISTENT_CODEBUDDY !== '0') {
+      console.log(`[claude-to-im] Persistent CodeBuddy preflight OK: ${persistentCheck.cliPath} (${persistentCheck.version})`);
+      const { PersistentCodeBuddyProvider } = await import('./lib/persistent-codebuddy/provider.js');
+      return new PersistentCodeBuddyProvider(pendingPerms, persistentCheck.cliPath, config.autoApprove);
+    }
+
+    if (process.env.CTI_PERSISTENT_CODEBUDDY !== '0') {
+      console.warn(
+        `[claude-to-im] CodeBuddy SDK persistent mode disabled by preflight: ${persistentCheck.error}\n` +
+        '  Falling back to query() mode.',
+      );
+    }
+
     console.log(`[claude-to-im] CodeBuddy SDK preflight OK: ${cliPath} (${check.version})`);
     const { CodeBuddySDKProvider } = await import('./codebuddysdk-provider.js');
     return new CodeBuddySDKProvider(pendingPerms, cliPath, config.autoApprove);
@@ -109,7 +124,7 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
 
     console.log(`[claude-to-im] Persistent Claude preflight OK: ${check.cliPath} (${check.version})`);
     const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
-    return new PersistentClaudeProvider(pendingPerms, check.cliPath);
+    return new PersistentClaudeProvider(pendingPerms, check.cliPath, config.autoApprove);
   }
 
   if (runtime === 'auto') {
@@ -118,7 +133,7 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
     if (persistentCheck.ok) {
       console.log(`[claude-to-im] Auto: using persistent Claude at ${persistentCheck.cliPath} (${persistentCheck.version})`);
       const { PersistentClaudeProvider } = await import('./lib/persistent-claude/provider.js');
-      return new PersistentClaudeProvider(pendingPerms, persistentCheck.cliPath);
+      return new PersistentClaudeProvider(pendingPerms, persistentCheck.cliPath, config.autoApprove);
     }
     if (persistentCheck.cliPath) {
       console.warn(
@@ -147,6 +162,20 @@ async function resolveProvider(config: Config, pendingPerms: PendingPermissions)
     if (codeBuddyCliPath) {
       const check = preflightCodeBuddyCheck(codeBuddyCliPath);
       if (check.ok) {
+        const persistentCheck = preflightPersistentCodeBuddyCheck(codeBuddyCliPath);
+        if (persistentCheck.ok && process.env.CTI_PERSISTENT_CODEBUDDY !== '0') {
+          console.log(`[claude-to-im] Auto: using persistent CodeBuddy SDK at ${persistentCheck.cliPath} (${persistentCheck.version})`);
+          const { PersistentCodeBuddyProvider } = await import('./lib/persistent-codebuddy/provider.js');
+          return new PersistentCodeBuddyProvider(pendingPerms, persistentCheck.cliPath, config.autoApprove);
+        }
+
+        if (process.env.CTI_PERSISTENT_CODEBUDDY !== '0') {
+          console.warn(
+            `[claude-to-im] Auto: persistent CodeBuddy SDK preflight failed: ${persistentCheck.error}\n` +
+            '  Falling back to query() CodeBuddy SDK.',
+          );
+        }
+
         console.log(`[claude-to-im] Auto: using CodeBuddy SDK at ${codeBuddyCliPath} (${check.version})`);
         const { CodeBuddySDKProvider } = await import('./codebuddysdk-provider.js');
         return new CodeBuddySDKProvider(pendingPerms, codeBuddyCliPath, config.autoApprove);
@@ -218,6 +247,7 @@ interface StatusInfo {
   runId?: string;
   startedAt?: string;
   channels?: string[];
+  runtime?: string;
   lastExitReason?: string;
 }
 
@@ -253,6 +283,7 @@ async function main(): Promise<void> {
   initBridgeContext({
     store,
     llm,
+    runtime: config.runtime,
     permissions: gateway,
     lifecycle: {
       onBridgeStart: () => {
@@ -265,6 +296,7 @@ async function main(): Promise<void> {
           runId,
           startedAt: new Date().toISOString(),
           channels: config.enabledChannels,
+          runtime: config.runtime,
         });
         console.log(`[claude-to-im] Bridge started (PID: ${process.pid}, channels: ${config.enabledChannels.join(', ')})`);
       },
@@ -287,6 +319,7 @@ async function main(): Promise<void> {
     pendingPerms.denyAll();
     await bridgeManager.stop();
     await shutdownPersistentPool();
+    await shutdownPersistentCodeBuddyPool();
     writeStatus({ running: false, lastExitReason: reason });
     process.exit(0);
   };

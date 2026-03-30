@@ -133,6 +133,35 @@ show_failure_help() {
   echo "  3. Rebuild bundle:   cd \"$SKILL_DIR\" && npm run build"
 }
 
+verify_online() {
+  local timeout_sec="${1:-60}"
+  local started=false
+
+  for _ in $(seq 1 "$timeout_sec"); do
+    if status_running; then
+      started=true
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$started" = "true" ]; then
+    local pid runtime
+    pid=$(read_pid)
+    runtime=$(grep -o '"runtime"[[:space:]]*:[[:space:]]*"[^"]*"' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *"//;s/"$//')
+    echo "✅ Bridge online${pid:+ (PID: $pid)}${runtime:+, runtime: $runtime}"
+    supervisor_is_running || echo "⚠️ Supervisor process not detected, but status.json reports running=true"
+    cat "$STATUS_FILE" 2>/dev/null
+    return 0
+  fi
+
+  echo "❌ Bridge verification failed: not online within ${timeout_sec}s"
+  status_running || echo "  status.json not reporting running=true."
+  show_last_exit_reason
+  show_failure_help
+  return 1
+}
+
 # ── Load platform-specific supervisor ──
 
 case "$(uname -s)" in
@@ -175,9 +204,9 @@ case "${1:-help}" in
     echo "Starting bridge..."
     supervisor_start
 
-    # Poll for up to 10 seconds waiting for status.json to report running
+    # Poll for up to 90 seconds waiting for status.json to report running
     STARTED=false
-    for _ in $(seq 1 10); do
+    for _ in $(seq 1 90); do
       sleep 1
       if status_running; then
         STARTED=true
@@ -251,9 +280,9 @@ case "${1:-help}" in
     [ -f "$CTI_HOME/config.env" ] && set -a && source "$CTI_HOME/config.env" && set +a
     clean_env
     supervisor_start
-    # Poll for up to 10 seconds waiting for status.json to report running
+    # Poll for up to 90 seconds waiting for status.json to report running
     STARTED=false
-    for _ in $(seq 1 10); do
+    for _ in $(seq 1 90); do
       sleep 1
       if status_running; then
         STARTED=true
@@ -304,7 +333,27 @@ case "${1:-help}" in
     tail -n "$N" "$LOG_FILE" 2>/dev/null | sed -E 's/(token|secret|password)(["\\x27]?\s*[:=]\s*["\\x27]?)[^ "]+/\1\2*****/gi'
     ;;
 
+  rebuild)
+    ensure_dirs
+
+    if [ -n "$CORE_DIR" ] && [ -f "$CORE_DIR/package.json" ]; then
+      echo "Rebuilding BuddyBridge..."
+      (cd "$CORE_DIR" && npm run build)
+    else
+      echo "Skipping BuddyBridge build (core repo not found)."
+    fi
+
+    echo "Rebuilding BuddyBridge-skill..."
+    (cd "$SKILL_DIR" && npm run build)
+
+    echo "Restarting bridge..."
+    "$0" restart
+
+    echo "Verifying online status..."
+    verify_online 60
+    ;;
+
   *)
-    echo "Usage: daemon.sh {start|stop|restart|status|logs [N]}"
+    echo "Usage: daemon.sh {start|stop|restart|status|logs [N]|rebuild}"
     ;;
 esac
