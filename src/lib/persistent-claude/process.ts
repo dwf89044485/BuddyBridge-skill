@@ -108,6 +108,10 @@ export class PersistentProcess {
       args.push('--append-system-prompt', options.systemPrompt.trim());
     }
 
+    if (options.resumeSessionId) {
+      args.push('--resume', options.resumeSessionId);
+    }
+
     // Spawn
     this.proc = spawn(this.cliPath, args, {
       cwd,
