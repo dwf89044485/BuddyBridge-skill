@@ -11,8 +11,9 @@ import type { LLMProvider, StreamChatParams, FileAttachment } from 'claude-to-im
 import type { PendingPermissions } from '../../permission-gateway.js';
 import { ProcessPool } from './process-pool.js';
 import { resolvePersistentCliPath } from './process.js';
-import type { FallbackTracker } from './types.js';
+import type { FallbackTracker, FallbackEntry } from './types.js';
 import { DEFAULT_POOL_CONFIG } from './types.js';
+import { classifyAuthError } from '../../llm-provider.js';
 
 // ── Image support ───────────────────────────────────────────────
 
@@ -41,23 +42,73 @@ let fallbackTracker: FallbackTracker = {
   sessionRetries: new Map(),
 };
 
+/**
+ * Lightweight health check: can the CLI start at all?
+ * Used to decide whether to lift a disabled session back to persistent mode.
+ */
+function cliHealthCheck(): boolean {
+  const cliPath = resolvePersistentCliPath();
+  if (!cliPath) return false;
+  try {
+    execSync(`"${cliPath}" --version`, { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function shouldUsePersistent(sessionId: string): boolean {
   if (fallbackTracker.globalDisabled) return false;
 
   const entry = fallbackTracker.sessionRetries.get(sessionId);
-  if (entry && entry.count >= 3 && Date.now() < entry.disabledUntil) {
+  if (!entry) return true;
+
+  // Still within the disabled window
+  if (entry.count >= 3 && Date.now() < entry.disabledUntil) {
+    // Unrecoverable error: only re-enable if the CLI passes a health check
+    if (entry.unrecoverable) {
+      if (cliHealthCheck()) {
+        console.log(`[persistent-claude] Health check passed, re-enabling session ${sessionId}`);
+        fallbackTracker.sessionRetries.delete(sessionId);
+        return true;
+      }
+      return false;
+    }
+    // Recoverable error (e.g. OOM): wait for timeout as before
     return false;
   }
+
+  // Disabled window expired — re-enable
+  if (entry.count >= 3 && Date.now() >= entry.disabledUntil) {
+    fallbackTracker.sessionRetries.delete(sessionId);
+    return true;
+  }
+
   return true;
 }
 
-function recordFailure(sessionId: string): void {
-  const entry = fallbackTracker.sessionRetries.get(sessionId) || { count: 0, disabledUntil: 0 };
-  entry.count++;
-  if (entry.count >= 3) {
-    entry.disabledUntil = Date.now() + 5 * 60 * 1000; // 5 minutes
-    console.warn(`[persistent-claude] Session ${sessionId} disabled for 5 min after ${entry.count} failures`);
+function recordFailure(sessionId: string, err?: Error): void {
+  const entry: FallbackEntry = fallbackTracker.sessionRetries.get(sessionId) || { count: 0, disabledUntil: 0 };
+
+  const errorMsg = err?.message || '';
+  const authKind = classifyAuthError(errorMsg);
+
+  if (authKind) {
+    // Unrecoverable: no point retrying until the user fixes auth
+    entry.unrecoverable = true;
+    entry.count = 3; // immediately hit threshold
+    entry.disabledUntil = Date.now() + 60 * 60 * 1000; // 1 hour (will lift on health check)
+    entry.lastError = errorMsg;
+    console.warn(`[persistent-claude] Unrecoverable error (${authKind}) for session ${sessionId}, disabled until health check passes`);
+  } else {
+    entry.count++;
+    entry.lastError = errorMsg;
+    if (entry.count >= 3) {
+      entry.disabledUntil = Date.now() + 5 * 60 * 1000; // 5 minutes
+      console.warn(`[persistent-claude] Session ${sessionId} disabled for 5 min after ${entry.count} failures`);
+    }
   }
+
   fallbackTracker.sessionRetries.set(sessionId, entry);
 }
 
@@ -250,7 +301,7 @@ export class PersistentClaudeProvider implements LLMProvider {
           console.log(`[persistent-claude] Stream complete for session ${sessionId}`);
         } catch (err) {
           console.error('[persistent-claude] Error, falling back:', (err as Error).message);
-          recordFailure(sessionId);
+          recordFailure(sessionId, err as Error);
 
           try {
             const { SDKLLMProvider } = await import('../../llm-provider.js');

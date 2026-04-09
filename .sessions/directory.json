@@ -1,0 +1,72 @@
+{
+  "_updated": "2026-04-08T15:34:43.367Z",
+  "_note": "频道目录。AI 通过此文件查找其他频道的 session。以平台名和频道名为 key，sessionPath 和 imHistoryPath 均为绝对路径，可直接读取。",
+  "discord": {
+    "11": {
+      "channelId": "1481273993746059314",
+      "sessionId": "0f93eeb0-b553-47d2-a1ef-13733bd73c56",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/0f93eeb0-b553-47d2-a1ef-13733bd73c56.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/6712be35-7a57-4109-bca4-e27811174d47.json",
+      "parentName": "----------------------- 工作 -----------------------",
+      "guildName": "红花油的服务器",
+      "isThread": false,
+      "model": null,
+      "updatedAt": "2026-03-24T14:47:03.415Z"
+    },
+    "212": {
+      "channelId": "1486029310803579032",
+      "sessionId": "0bb7279e-846c-49b3-ae5a-b4aca6cac3c0",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/0bb7279e-846c-49b3-ae5a-b4aca6cac3c0.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/0bb7279e-846c-49b3-ae5a-b4aca6cac3c0.json",
+      "parentName": "----------------------- 工作 -----------------------",
+      "guildName": "红花油的服务器",
+      "isThread": false,
+      "model": null,
+      "updatedAt": "2026-03-24T15:50:50.664Z"
+    },
+    "30417479": {
+      "channelId": "1478265694230417479",
+      "sessionId": "375ace8b-5d8a-4699-89d1-5b3f75d2169f",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-CP/375ace8b-5d8a-4699-89d1-5b3f75d2169f.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/4828e95b-c5c9-49de-806d-7b23bb0cf481.json",
+      "parentName": null,
+      "guildName": null,
+      "isThread": false,
+      "model": "claude-opus-4.6",
+      "updatedAt": "2026-03-28T04:51:43.115Z"
+    },
+    "42595881": {
+      "channelId": "1491280879442595881",
+      "sessionId": "942e59fb-0627-4f60-b693-310c39ff5a44",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/942e59fb-0627-4f60-b693-310c39ff5a44.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/f88c22d5-ef9e-4fe8-aa2f-306097b6cfbb.json",
+      "parentName": null,
+      "guildName": null,
+      "isThread": false,
+      "model": "gpt-5.4",
+      "updatedAt": "2026-04-08T09:14:48.218Z"
+    },
+    "测试": {
+      "channelId": "1484443479777214706",
+      "sessionId": "d2baa759-dde4-45ee-bffb-4dcd23987406",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/d2baa759-dde4-45ee-bffb-4dcd23987406.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/d2baa759-dde4-45ee-bffb-4dcd23987406.json",
+      "parentName": "11",
+      "guildName": "红花油的服务器",
+      "isThread": true,
+      "model": null,
+      "updatedAt": "2026-03-24T14:53:49.507Z"
+    },
+    "测试超时": {
+      "channelId": "1491364563520720916",
+      "sessionId": "aef9a64b-9e60-4642-b66d-f576dc7ba8de",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/aef9a64b-9e60-4642-b66d-f576dc7ba8de.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/32e151de-1f47-4167-b6a7-65d4fb239b39.json",
+      "parentName": "🐧鹅仔运维",
+      "guildName": "红花油的服务器",
+      "isThread": true,
+      "model": "gpt-5.4",
+      "updatedAt": "2026-04-08T15:34:43.365Z"
+    }
+  }
+}

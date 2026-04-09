@@ -1,9 +1,10 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import type { LLMProvider, StreamChatParams } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from '../../permission-gateway.js';
 import { ProcessPool } from '../persistent-claude/process-pool.js';
-import { DEFAULT_POOL_CONFIG, type FallbackTracker } from '../persistent-claude/types.js';
+import { DEFAULT_POOL_CONFIG, type FallbackTracker, type FallbackEntry } from '../persistent-claude/types.js';
 import { resolveCodeBuddyCliPath, preflightCodeBuddyCheck } from '../../codebuddy-provider.js';
+import { classifyCodeBuddyAuthError } from '../../codebuddysdk-provider.js';
 import { appendLocalAttachmentSystemNote, splitLocalAttachments } from '../../file-attachment-prompt.js';
 
 const SUPPORTED_IMAGE_TYPES = new Set<string>([
@@ -25,20 +26,73 @@ let fallbackTracker: FallbackTracker = {
   sessionRetries: new Map(),
 };
 
+/**
+ * Lightweight health check: can the CodeBuddy CLI start at all?
+ * Used to decide whether to lift a disabled session back to persistent mode.
+ */
+function codebuddyHealthCheck(): boolean {
+  const cliPath = resolveCodeBuddyCliPath();
+  if (!cliPath) return false;
+  try {
+    execSync(`"${cliPath}" --version`, { stdio: 'ignore', timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function shouldUsePersistent(sessionId: string): boolean {
   if (fallbackTracker.globalDisabled) return false;
+
   const entry = fallbackTracker.sessionRetries.get(sessionId);
-  if (entry && entry.count >= 3 && Date.now() < entry.disabledUntil) return false;
+  if (!entry) return true;
+
+  // Still within the disabled window
+  if (entry.count >= 3 && Date.now() < entry.disabledUntil) {
+    // Unrecoverable error: only re-enable if the CLI passes a health check
+    if (entry.unrecoverable) {
+      if (codebuddyHealthCheck()) {
+        console.log(`[persistent-codebuddy] Health check passed, re-enabling session ${sessionId}`);
+        fallbackTracker.sessionRetries.delete(sessionId);
+        return true;
+      }
+      return false;
+    }
+    // Recoverable error: wait for timeout
+    return false;
+  }
+
+  // Disabled window expired — re-enable
+  if (entry.count >= 3 && Date.now() >= entry.disabledUntil) {
+    fallbackTracker.sessionRetries.delete(sessionId);
+    return true;
+  }
+
   return true;
 }
 
-function recordFailure(sessionId: string): void {
-  const entry = fallbackTracker.sessionRetries.get(sessionId) || { count: 0, disabledUntil: 0 };
-  entry.count++;
-  if (entry.count >= 3) {
-    entry.disabledUntil = Date.now() + 5 * 60 * 1000;
-    console.warn(`[persistent-codebuddy] Session ${sessionId} disabled for 5 min after ${entry.count} failures`);
+function recordFailure(sessionId: string, err?: Error): void {
+  const entry: FallbackEntry = fallbackTracker.sessionRetries.get(sessionId) || { count: 0, disabledUntil: 0 };
+
+  const errorMsg = err?.message || '';
+  const authKind = classifyCodeBuddyAuthError(errorMsg);
+
+  if (authKind) {
+    // Unrecoverable: no point retrying until the user fixes auth/quota
+    entry.unrecoverable = true;
+    entry.count = 3;
+    entry.disabledUntil = Date.now() + 60 * 60 * 1000; // 1 hour (will lift on health check)
+    entry.lastError = errorMsg;
+    console.warn(`[persistent-codebuddy] Unrecoverable error (${authKind}) for session ${sessionId}, disabled until health check passes`);
+  } else {
+    entry.count++;
+    entry.lastError = errorMsg;
+    if (entry.count >= 3) {
+      entry.disabledUntil = Date.now() + 5 * 60 * 1000; // 5 minutes
+      console.warn(`[persistent-codebuddy] Session ${sessionId} disabled for 5 min after ${entry.count} failures`);
+    }
   }
+
   fallbackTracker.sessionRetries.set(sessionId, entry);
 }
 
@@ -119,7 +173,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
         const pool = getPool();
 
         try {
-          let proc = await pool.connect(sessionId, {
+          const proc = await pool.connect(sessionId, {
             cliPath,
             cwd: params.workingDirectory,
             permissionMode: params.permissionMode as string | undefined,
@@ -129,18 +183,12 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
             permissionPromptTool: false,
           });
 
+          // Hot-swap model via set_model control request (no process restart)
           const targetModel = params.model?.trim();
           if (targetModel && proc.model && proc.model !== targetModel) {
-            console.log(`[persistent-codebuddy] Model changed (${proc.model} -> ${targetModel}), recreating process`);
-            await pool.disconnect(sessionId).catch(() => {});
-            proc = await pool.connect(sessionId, {
-              cliPath,
-              cwd: params.workingDirectory,
-              permissionMode: params.permissionMode as string | undefined,
-              model: params.model,
-              systemPrompt: params.systemPrompt,
-              resumeSessionId: params.sdkSessionId || undefined,
-              permissionPromptTool: false,
+            console.log(`[persistent-codebuddy] Model change detected: ${proc.model} -> ${targetModel}`);
+            await proc.setModel(targetModel).catch((err) => {
+              console.warn(`[persistent-codebuddy] setModel failed: ${err.message}`);
             });
           }
 
@@ -227,7 +275,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
           console.log(`[persistent-codebuddy] Stream complete for session ${sessionId}`);
         } catch (err) {
           console.error('[persistent-codebuddy] Error, falling back:', (err as Error).message);
-          recordFailure(sessionId);
+          recordFailure(sessionId, err as Error);
           try {
             const { CodeBuddySDKProvider } = await import('../../codebuddysdk-provider.js');
             const fallback = new CodeBuddySDKProvider(pendingPerms, cliPath, autoApprove);

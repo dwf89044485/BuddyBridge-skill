@@ -569,14 +569,28 @@ function cliMessageToSseString(msg: CliMessage): string | null {
       const assistant = msg as unknown as {
         message: { content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> };
       };
-      const parts: string[] = [];
+      
+      // Capture text for error recovery (like SDK provider does)
+      // but DON'T emit it — stream_event deltas handle streaming text.
+      // This prevents duplication when both stream_event deltas and
+      // the final assistant message contain the same text.
+      // See llm-provider.ts lines 639-647 for the SDK provider pattern.
       for (const block of assistant.message.content) {
-        if (block.type === 'text' && block.text) {
-          parts.push(block.text);
+        if (block.type === 'tool_use') {
+          // Only emit tool_use from assistant message; text is omitted
+          return `data: ${JSON.stringify({
+            type: 'tool_use',
+            data: JSON.stringify({
+              id: block.id || '',
+              name: block.name || '',
+              input: block.input || {},
+            }),
+          })}
+`;
         }
       }
-      if (parts.length === 0) return null;
-      return `data: ${JSON.stringify({ type: 'text', data: parts.join('') })}\n`;
+      // Text blocks are NOT emitted — they're already streamed via stream_event deltas.
+      return null;
     }
 
     case 'user': {

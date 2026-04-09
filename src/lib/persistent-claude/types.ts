@@ -162,6 +162,10 @@ export interface PendingResponse {
 export interface FallbackEntry {
   count: number;
   disabledUntil: number;
+  /** If true, the failure was classified as unrecoverable (e.g. auth error). */
+  unrecoverable?: boolean;
+  /** The error message from the last failure, used for classification. */
+  lastError?: string;
 }
 
 export interface FallbackTracker {
