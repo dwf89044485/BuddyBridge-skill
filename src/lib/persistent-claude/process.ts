@@ -20,6 +20,7 @@ import type {
   CliControlResponse,
 } from './types.js';
 import { buildSubprocessEnv } from '../../llm-provider.js';
+import { sseEvent } from '../../sse-utils.js';
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -559,9 +560,7 @@ export class PersistentProcess {
 
 /**
  * Convert a CLI stream-json message to a bridge SSE string.
- * Format: `data: {"type":"<sse_type>","data":"<payload>"}\n`
- *
- * Matches the format from sse-utils.ts sseEvent() function.
+ * Uses sseEvent() for consistent single-layer JSON formatting.
  */
 function cliMessageToSseString(msg: CliMessage): string | null {
   switch (msg.type) {
@@ -569,7 +568,7 @@ function cliMessageToSseString(msg: CliMessage): string | null {
       const assistant = msg as unknown as {
         message: { content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> };
       };
-      
+
       // Capture text for error recovery (like SDK provider does)
       // but DON'T emit it — stream_event deltas handle streaming text.
       // This prevents duplication when both stream_event deltas and
@@ -578,15 +577,11 @@ function cliMessageToSseString(msg: CliMessage): string | null {
       for (const block of assistant.message.content) {
         if (block.type === 'tool_use') {
           // Only emit tool_use from assistant message; text is omitted
-          return `data: ${JSON.stringify({
-            type: 'tool_use',
-            data: JSON.stringify({
-              id: block.id || '',
-              name: block.name || '',
-              input: block.input || {},
-            }),
-          })}
-`;
+          return sseEvent('tool_use', {
+            id: block.id || '',
+            name: block.name || '',
+            input: block.input || {},
+          });
         }
       }
       // Text blocks are NOT emitted — they're already streamed via stream_event deltas.
@@ -600,14 +595,11 @@ function cliMessageToSseString(msg: CliMessage): string | null {
       for (const block of user.message.content) {
         if (block.type === 'tool_result' && block.tool_use_id) {
           const resultContent = normalizeToolResultContent(block.content);
-          return `data: ${JSON.stringify({
-            type: 'tool_result',
-            data: JSON.stringify({
-              tool_use_id: block.tool_use_id,
-              content: resultContent,
-              is_error: block.is_error || false,
-            }),
-          })}\n`;
+          return sseEvent('tool_result', {
+            tool_use_id: block.tool_use_id,
+            content: resultContent,
+            is_error: block.is_error || false,
+          });
         }
       }
       return null;
@@ -623,21 +615,18 @@ function cliMessageToSseString(msg: CliMessage): string | null {
       };
       const event = streamEvent.event;
 
-      // Text delta → text SSE
+      // Text delta → text SSE (string data, stays as-is)
       if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta?.text) {
-        return `data: ${JSON.stringify({ type: 'text', data: event.delta.text })}\n`;
+        return sseEvent('text', event.delta.text);
       }
 
       // Tool use start → tool_use SSE
       if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-        return `data: ${JSON.stringify({
-          type: 'tool_use',
-          data: JSON.stringify({
-            id: event.content_block.id || '',
-            name: event.content_block.name || '',
-            input: event.content_block.input || {},
-          }),
-        })}\n`;
+        return sseEvent('tool_use', {
+          id: event.content_block.id || '',
+          name: event.content_block.name || '',
+          input: event.content_block.input || {},
+        });
       }
 
       return null;
@@ -646,15 +635,12 @@ function cliMessageToSseString(msg: CliMessage): string | null {
     case 'system': {
       const sys = msg as { subtype?: string; session_id?: string; model?: string };
       if (sys.subtype === 'init') {
-        return `data: ${JSON.stringify({
-          type: 'status',
-          data: JSON.stringify({
-            session_id: sys.session_id,
-            model: sys.model,
-            _internal: true,
-            persistent_process: true,
-          }),
-        })}\n`;
+        return sseEvent('status', {
+          session_id: sys.session_id,
+          model: sys.model,
+          _internal: true,
+          persistent_process: true,
+        });
       }
       return null;
     }
@@ -674,30 +660,23 @@ function cliMessageToSseString(msg: CliMessage): string | null {
           cache_creation_input_tokens?: number;
         };
       };
-      return `data: ${JSON.stringify({
-        type: result.subtype === 'success' ? 'result' : 'error',
-        data: JSON.stringify({
-          session_id: result.session_id,
-          is_error: result.is_error,
-          result: result.result || result.subtype,
-          duration_ms: result.duration_ms,
-          total_cost_usd: result.total_cost_usd,
-          input_tokens: result.usage?.input_tokens,
-          output_tokens: result.usage?.output_tokens,
-          cache_read_input_tokens: result.usage?.cache_read_input_tokens,
-          cache_creation_input_tokens: result.usage?.cache_creation_input_tokens,
-        }),
-      })}\n`;
+      return sseEvent(result.subtype === 'success' ? 'result' : 'error', {
+        session_id: result.session_id,
+        is_error: result.is_error,
+        result: result.result || result.subtype,
+        duration_ms: result.duration_ms,
+        total_cost_usd: result.total_cost_usd,
+        input_tokens: result.usage?.input_tokens,
+        output_tokens: result.usage?.output_tokens,
+        cache_read_input_tokens: result.usage?.cache_read_input_tokens,
+        cache_creation_input_tokens: result.usage?.cache_creation_input_tokens,
+      });
     }
 
     case 'error': {
       const err = msg as { result?: string; errors?: string[] };
-      return `data: ${JSON.stringify({
-        type: 'error',
-        data: JSON.stringify({
-          error: err.result || err.errors?.join('; ') || 'Unknown error',
-        }),
-      })}\n`;
+      // Error events use plain text data (consistent with sseEvent('error', string))
+      return sseEvent('error', err.result || err.errors?.join('; ') || 'Unknown error');
     }
 
     default:

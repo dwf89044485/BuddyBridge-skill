@@ -6,6 +6,7 @@ import { DEFAULT_POOL_CONFIG, type FallbackTracker, type FallbackEntry } from '.
 import { resolveCodeBuddyCliPath, preflightCodeBuddyCheck } from '../../codebuddy-provider.js';
 import { classifyCodeBuddyAuthError } from '../../codebuddysdk-provider.js';
 import { appendLocalAttachmentSystemNote, splitLocalAttachments } from '../../file-attachment-prompt.js';
+import { sseEvent } from '../../sse-utils.js';
 
 const SUPPORTED_IMAGE_TYPES = new Set<string>([
   'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
@@ -158,9 +159,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
             controller.close();
           } catch (err) {
             try {
-              controller.enqueue(
-                `data: ${JSON.stringify({ type: 'error', data: JSON.stringify({ error: (err as Error).message }) })}\n`,
-              );
+              controller.enqueue(sseEvent('error', (err as Error).message));
             } catch { /* ignore */ }
             try { controller.close(); } catch { /* ignore */ }
           }
@@ -197,17 +196,12 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
               return { behavior: 'allow', updatedInput: input };
             }
 
-            controller.enqueue(
-              `data: ${JSON.stringify({
-                type: 'permission_request',
-                data: JSON.stringify({
-                  permissionRequestId: requestId,
-                  toolName,
-                  toolInput: input,
-                  suggestions: [],
-                }),
-              })}\n`,
-            );
+            controller.enqueue(sseEvent('permission_request', {
+              permissionRequestId: requestId,
+              toolName,
+              toolInput: input,
+              suggestions: [],
+            }));
 
             try {
               const result = await pendingPerms.waitFor(requestId);
@@ -224,9 +218,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
             reject: (err: Error) => {
               console.error('[persistent-codebuddy] Pending response rejected:', err.message);
               try {
-                controller.enqueue(
-                  `data: ${JSON.stringify({ type: 'error', data: JSON.stringify({ error: err.message }) })}\n`,
-                );
+                controller.enqueue(sseEvent('error', err.message));
               } catch { /* ignore */ }
               try { controller.close(); } catch { /* ignore */ }
             },
@@ -249,7 +241,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
           const keepAliveTimer = setInterval(() => {
             try {
               if (proc.isAlive && proc.state === 'ready') {
-                controller.enqueue(`data: ${JSON.stringify({ type: 'keep_alive', data: '' })}\n`);
+                controller.enqueue(sseEvent('keep_alive', ''));
               }
             } catch { /* ignore */ }
           }, 30_000);
@@ -289,14 +281,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
             controller.close();
           } catch (fallbackErr) {
             try {
-              controller.enqueue(
-                `data: ${JSON.stringify({
-                  type: 'error',
-                  data: JSON.stringify({
-                    error: `Both persistent and fallback failed. Persistent: ${(err as Error).message}. Fallback: ${(fallbackErr as Error).message}`,
-                  }),
-                })}\n`,
-              );
+              controller.enqueue(sseEvent('error', `Both persistent and fallback failed. Persistent: ${(err as Error).message}. Fallback: ${(fallbackErr as Error).message}`));
             } catch { /* ignore */ }
             try { controller.close(); } catch { /* ignore */ }
           }

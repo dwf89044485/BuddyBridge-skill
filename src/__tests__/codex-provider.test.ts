@@ -11,12 +11,11 @@ describe('sseEvent', () => {
     assert.equal(result, 'data: {"type":"text","data":"hello"}\n');
   });
 
-  it('stringifies object data payload', () => {
+  it('spreads object data payload at top level (single-layer JSON)', () => {
     const result = sseEvent('result', { usage: { input_tokens: 10 } });
     const parsed = JSON.parse(result.slice(6));
     assert.equal(parsed.type, 'result');
-    const inner = JSON.parse(parsed.data);
-    assert.equal(inner.usage.input_tokens, 10);
+    assert.equal(parsed.usage.input_tokens, 10);
   });
 
   it('handles newlines in data', () => {
@@ -39,7 +38,7 @@ async function collectStream(stream: ReadableStream<string>): Promise<string[]> 
   return chunks;
 }
 
-function parseSSEChunks(chunks: string[]): Array<{ type: string; data: string }> {
+function parseSSEChunks(chunks: string[]): Array<Record<string, unknown>> {
   return chunks
     .flatMap(chunk => chunk.split('\n'))
     .filter(line => line.startsWith('data: '))
@@ -70,7 +69,7 @@ describe('CodexProvider', () => {
 
     const errorEvent = events.find(e => e.type === 'error');
     assert.ok(errorEvent, 'Should emit an error event');
-    assert.ok(errorEvent!.data.includes('Missing API key'), 'Error should contain the cause');
+    assert.ok((errorEvent!.data as string).includes('Missing API key'), 'Error should contain the cause');
   });
 
   it('maps agent_message item to text SSE event', async () => {
@@ -117,13 +116,11 @@ describe('CodexProvider', () => {
     const events = parseSSEChunks(chunks);
     assert.equal(events.length, 2);
 
-    const toolUse = JSON.parse(events[0].data);
-    assert.equal(toolUse.name, 'Bash');
-    assert.equal(toolUse.input.command, 'ls -la');
+    assert.equal(events[0].name, 'Bash');
+    assert.equal((events[0].input as any).command, 'ls -la');
 
-    const toolResult = JSON.parse(events[1].data);
-    assert.equal(toolResult.tool_use_id, 'cmd-1');
-    assert.equal(toolResult.is_error, false);
+    assert.equal(events[1].tool_use_id, 'cmd-1');
+    assert.equal(events[1].is_error, false);
   });
 
   it('marks non-zero exit code as error', async () => {
@@ -145,8 +142,7 @@ describe('CodexProvider', () => {
     });
 
     const events = parseSSEChunks(chunks);
-    const toolResult = JSON.parse(events[1].data);
-    assert.equal(toolResult.is_error, true);
+    assert.equal(events[1].is_error, true);
   });
 
   it('maps file_change item correctly', async () => {
@@ -170,10 +166,8 @@ describe('CodexProvider', () => {
 
     const events = parseSSEChunks(chunks);
     assert.equal(events.length, 2);
-    const toolUse = JSON.parse(events[0].data);
-    assert.equal(toolUse.name, 'Edit');
-    const toolResult = JSON.parse(events[1].data);
-    assert.ok(toolResult.content.includes('update: src/main.ts'));
+    assert.equal(events[0].name, 'Edit');
+    assert.ok((events[1].content as string).includes('update: src/main.ts'));
   });
 
   it('maps mcp_tool_call item correctly', async () => {
@@ -196,10 +190,8 @@ describe('CodexProvider', () => {
     });
 
     const events = parseSSEChunks(chunks);
-    const toolUse = JSON.parse(events[0].data);
-    assert.equal(toolUse.name, 'mcp__myserver__search');
-    const toolResult = JSON.parse(events[1].data);
-    assert.equal(toolResult.content, 'found 3 results');
+    assert.equal(events[0].name, 'mcp__myserver__search');
+    assert.equal(events[1].content, 'found 3 results');
   });
 
   it('maps mcp_tool_call with structured_content', async () => {
@@ -222,8 +214,7 @@ describe('CodexProvider', () => {
     });
 
     const events = parseSSEChunks(chunks);
-    const toolResult = JSON.parse(events[1].data);
-    assert.equal(toolResult.content, JSON.stringify({ items: [1, 2, 3] }));
+    assert.equal(events[1].content, JSON.stringify({ items: [1, 2, 3] }));
   });
 
   it('skips empty agent_message', async () => {

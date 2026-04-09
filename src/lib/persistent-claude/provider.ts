@@ -14,6 +14,7 @@ import { resolvePersistentCliPath } from './process.js';
 import type { FallbackTracker, FallbackEntry } from './types.js';
 import { DEFAULT_POOL_CONFIG } from './types.js';
 import { classifyAuthError } from '../../llm-provider.js';
+import { sseEvent } from '../../sse-utils.js';
 
 // ── Image support ───────────────────────────────────────────────
 
@@ -153,9 +154,7 @@ export class PersistentClaudeProvider implements LLMProvider {
             controller.close();
           } catch (err) {
             try {
-              controller.enqueue(
-                `data: ${JSON.stringify({ type: 'error', data: JSON.stringify({ error: (err as Error).message }) })}\n`,
-              );
+              controller.enqueue(sseEvent('error', (err as Error).message));
             } catch { /* controller closed */ }
             try { controller.close(); } catch { /* already closed */ }
           }
@@ -186,17 +185,12 @@ export class PersistentClaudeProvider implements LLMProvider {
             }
 
             // Emit permission_request SSE event to bridge
-            controller.enqueue(
-              `data: ${JSON.stringify({
-                type: 'permission_request',
-                data: JSON.stringify({
-                  permissionRequestId: requestId,
-                  toolName,
-                  toolInput: input,
-                  suggestions: [],
-                }),
-              })}\n`,
-            );
+            controller.enqueue(sseEvent('permission_request', {
+              permissionRequestId: requestId,
+              toolName,
+              toolInput: input,
+              suggestions: [],
+            }));
 
             // Wait for IM user response via pendingPerms
             try {
@@ -215,9 +209,7 @@ export class PersistentClaudeProvider implements LLMProvider {
             reject: (err: Error) => {
               console.error('[persistent-claude] Pending response rejected:', err.message);
               try {
-                controller.enqueue(
-                  `data: ${JSON.stringify({ type: 'error', data: JSON.stringify({ error: err.message }) })}\n`,
-                );
+                controller.enqueue(sseEvent('error', err.message));
               } catch { /* controller may be closed */ }
               try { controller.close(); } catch { /* already closed */ }
             },
@@ -273,7 +265,7 @@ export class PersistentClaudeProvider implements LLMProvider {
           const keepAliveTimer = setInterval(() => {
             try {
               if (proc.isAlive && proc.state === 'ready') {
-                controller.enqueue(`data: ${JSON.stringify({ type: 'keep_alive', data: '' })}\n`);
+                controller.enqueue(sseEvent('keep_alive', ''));
               }
             } catch { /* controller closed */ }
           }, 30_000);
@@ -317,14 +309,7 @@ export class PersistentClaudeProvider implements LLMProvider {
           } catch (fallbackErr) {
             console.error('[persistent-claude] Fallback also failed:', (fallbackErr as Error).message);
             try {
-              controller.enqueue(
-                `data: ${JSON.stringify({
-                  type: 'error',
-                  data: JSON.stringify({
-                    error: `Both persistent and fallback failed. Persistent: ${(err as Error).message}. Fallback: ${(fallbackErr as Error).message}`,
-                  }),
-                })}\n`,
-              );
+              controller.enqueue(sseEvent('error', `Both persistent and fallback failed. Persistent: ${(err as Error).message}. Fallback: ${(fallbackErr as Error).message}`));
             } catch { /* controller closed */ }
             try { controller.close(); } catch { /* already closed */ }
           }

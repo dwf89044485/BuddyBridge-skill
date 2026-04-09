@@ -6,6 +6,10 @@
  */
 
 export function sseEvent(type: string, data: unknown): string {
-  const payload = typeof data === 'string' ? data : JSON.stringify(data);
-  return `data: ${JSON.stringify({ type, data: payload })}\n`;
+  if (typeof data === 'string') {
+    // Simple events (text, error, keep_alive): preserve `data` string field
+    return `data: ${JSON.stringify({ type, data })}\n`;
+  }
+  // Structured events: spread object fields directly at top level (single-layer JSON)
+  return `data: ${JSON.stringify({ type, ...(data as Record<string, unknown>) })}\n`;
 }
