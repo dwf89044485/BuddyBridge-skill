@@ -72,12 +72,29 @@ ensure_built() {
   fi
 }
 
+normalize_runtime() {
+  case "${1:-}" in
+    claude|persistent-claude)
+      echo "claude"
+      ;;
+    codex)
+      echo "codex"
+      ;;
+    codebuddy|codebuddysdk|auto|"")
+      echo "codebuddy"
+      ;;
+    *)
+      echo "codebuddy"
+      ;;
+  esac
+}
+
 clean_env() {
   unset CLAUDECODE 2>/dev/null || true
 
-  local runtime
-  runtime=$(grep "^CTI_RUNTIME=" "$CTI_HOME/config.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'" | tr -d '"' || true)
-  runtime="${runtime:-claude}"
+  local runtime raw_runtime
+  raw_runtime=$(grep "^CTI_RUNTIME=" "$CTI_HOME/config.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'" | tr -d '"' || true)
+  runtime=$(normalize_runtime "$raw_runtime")
 
   local mode="${CTI_ENV_ISOLATION:-inherit}"
   if [ "$mode" = "strict" ]; then
@@ -94,8 +111,8 @@ clean_env() {
           case "$name" in OPENAI_*) unset "$name" 2>/dev/null || true ;; esac
         done < <(env)
         ;;
-      auto)
-        # Keep both ANTHROPIC_* and OPENAI_* for auto mode
+      codebuddy)
+        # Keep both ANTHROPIC_* and OPENAI_* because codebuddy runtime may fallback to Claude or Codex.
         ;;
     esac
   fi
@@ -112,6 +129,16 @@ pid_alive() {
 
 status_running() {
   [ -f "$STATUS_FILE" ] && grep -q '"running"[[:space:]]*:[[:space:]]*true' "$STATUS_FILE" 2>/dev/null
+}
+
+read_status_field() {
+  local key="$1"
+  grep -o '"'"$key"'"[[:space:]]*:[[:space:]]*"[^"]*"' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *"//;s/"$//'
+}
+
+read_status_bool() {
+  local key="$1"
+  grep -o '"'"$key"'"[[:space:]]*:[[:space:]]*\(true\|false\)' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *//'
 }
 
 show_last_exit_reason() {
@@ -146,10 +173,18 @@ verify_online() {
   done
 
   if [ "$started" = "true" ]; then
-    local pid runtime
+    local pid runtime resolved provider_chain used_persistent fallback_applied
     pid=$(read_pid)
-    runtime=$(grep -o '"runtime"[[:space:]]*:[[:space:]]*"[^"]*"' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *"//;s/"$//')
-    echo "✅ Bridge online${pid:+ (PID: $pid)}${runtime:+, runtime: $runtime}"
+    runtime=$(read_status_field configuredRuntime)
+    [ -n "$runtime" ] || runtime=$(read_status_field runtime)
+    resolved=$(read_status_field resolvedProvider)
+    provider_chain=$(read_status_field providerChain)
+    used_persistent=$(read_status_bool usedPersistent)
+    fallback_applied=$(read_status_bool fallbackApplied)
+    echo "✅ Bridge online${pid:+ (PID: $pid)}${runtime:+, runtime: $runtime}${resolved:+, provider: $resolved}"
+    [ -n "$provider_chain" ] && echo "Provider chain: $provider_chain"
+    [ -n "$used_persistent" ] && echo "Persistent: $used_persistent"
+    [ -n "$fallback_applied" ] && echo "Fallback applied: $fallback_applied"
     supervisor_is_running || echo "⚠️ Supervisor process not detected, but status.json reports running=true"
     cat "$STATUS_FILE" 2>/dev/null
     return 0
@@ -316,7 +351,18 @@ case "${1:-help}" in
       echo "Bridge process is running${PID:+ (PID: $PID)}"
       # Business status from status.json
       if status_running; then
+        runtime=$(read_status_field configuredRuntime)
+        [ -n "$runtime" ] || runtime=$(read_status_field runtime)
+        resolved=$(read_status_field resolvedProvider)
+        provider_chain=$(read_status_field providerChain)
+        used_persistent=$(read_status_bool usedPersistent)
+        fallback_applied=$(read_status_bool fallbackApplied)
         echo "Bridge status: running"
+        [ -n "$runtime" ] && echo "Configured runtime: $runtime"
+        [ -n "$resolved" ] && echo "Resolved provider: $resolved"
+        [ -n "$provider_chain" ] && echo "Provider chain: $provider_chain"
+        [ -n "$used_persistent" ] && echo "Persistent: $used_persistent"
+        [ -n "$fallback_applied" ] && echo "Fallback applied: $fallback_applied"
       else
         echo "Bridge status: process alive but status.json not reporting running"
       fi
@@ -324,6 +370,15 @@ case "${1:-help}" in
     else
       echo "Bridge is not running"
       [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+      if [ -f "$STATUS_FILE" ]; then
+        runtime=$(read_status_field configuredRuntime)
+        [ -n "$runtime" ] || runtime=$(read_status_field runtime)
+        resolved=$(read_status_field resolvedProvider)
+        provider_chain=$(read_status_field providerChain)
+        [ -n "$runtime" ] && echo "Last configured runtime: $runtime"
+        [ -n "$resolved" ] && echo "Last resolved provider: $resolved"
+        [ -n "$provider_chain" ] && echo "Last provider chain: $provider_chain"
+      fi
       show_last_exit_reason
     fi
     ;;

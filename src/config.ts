@@ -2,8 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export type Runtime = 'codebuddy' | 'claude' | 'codex';
+export type LegacyRuntime = Runtime | 'codebuddysdk' | 'persistent-claude' | 'auto';
+
 export interface Config {
-  runtime: 'claude' | 'codex' | 'codebuddy' | 'codebuddysdk' | 'persistent-claude' | 'auto';
+  runtime: Runtime;
   enabledChannels: string[];
   defaultWorkDir: string;
   defaultModel?: string;
@@ -79,6 +82,21 @@ function parseFeishuGroupPolicy(value: string | undefined): Config['feishuGroupP
   return undefined;
 }
 
+export function normalizeRuntime(value: string | undefined): Runtime {
+  switch (value) {
+    case 'claude':
+    case 'persistent-claude':
+      return 'claude';
+    case 'codex':
+      return 'codex';
+    case 'codebuddy':
+    case 'codebuddysdk':
+    case 'auto':
+    default:
+      return 'codebuddy';
+  }
+}
+
 export function loadConfig(): Config {
   let env = new Map<string, string>();
   try {
@@ -88,8 +106,7 @@ export function loadConfig(): Config {
     // Config file doesn't exist yet — use defaults
   }
 
-  const rawRuntime = env.get("CTI_RUNTIME") || "persistent-claude";
-  const runtime = (["claude", "codex", "codebuddy", "codebuddysdk", "persistent-claude", "auto"].includes(rawRuntime) ? rawRuntime : "persistent-claude") as Config["runtime"];
+  const runtime = normalizeRuntime(env.get("CTI_RUNTIME") || "codebuddy");
 
   return {
     runtime,

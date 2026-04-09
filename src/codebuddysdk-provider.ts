@@ -13,7 +13,7 @@ import { appendLocalAttachmentSystemNote, splitLocalAttachments } from './file-a
 /** Patterns indicating the CLI is not logged in. */
 const CLI_AUTH_PATTERNS = [
   /not logged in/i,
-  /please run \/login/i,
+  /please run\s+['"]?\/login['"]?/i,
   /loggedIn['":\s]*false/i,
 ];
 

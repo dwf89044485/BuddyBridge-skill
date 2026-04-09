@@ -10,14 +10,14 @@ Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from T
 
 ## How It Works
 
-This skill runs a background daemon that connects your IM bots to Claude Code or Codex sessions. Messages from IM are forwarded to the AI coding agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
+This skill runs a background daemon that connects your IM bots to CodeBuddy / Claude / Codex sessions. Messages from IM are forwarded to the AI coding agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
 
 ```
 You (Telegram/Discord/Feishu/QQ/WeChat)
   ↕ Bot API
 Background Daemon (Node.js)
-  ↕ Claude Agent SDK or Codex SDK (configurable via CTI_RUNTIME)
-Claude Code / Codex → reads/writes your codebase
+  ↕ CodeBuddy / Claude / Codex runtime chain (configurable via CTI_RUNTIME)
+CodeBuddy / Claude Code / Codex → reads/writes your codebase
 ```
 
 ## Features
@@ -33,9 +33,9 @@ Claude Code / Codex → reads/writes your codebase
 ## Prerequisites
 
 - **Node.js >= 20**
-- **Claude Code CLI** (for `CTI_RUNTIME=claude` or `auto`) — installed and authenticated (`claude` command available)
-- **CodeBuddy CLI** (for `CTI_RUNTIME=codebuddy` or `auto`) — installed and executable (`codebuddy`, with `cbc` fallback)
-- **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
+- **CodeBuddy CLI** (recommended default path for `CTI_RUNTIME=codebuddy`) — installed and executable (`codebuddy`, with `cbc` fallback)
+- **Claude Code CLI** (used by `CTI_RUNTIME=claude`, and as fallback inside the `codebuddy` chain) — installed and authenticated (`claude` command available)
+- **Codex CLI** (used by `CTI_RUNTIME=codex`, and as the final fallback in the `codebuddy` / `claude` chains) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
 
 ## Installation
 
@@ -194,7 +194,7 @@ The wizard will guide you through:
 
 1. **Choose channels** — pick Telegram, Discord, Feishu, QQ, WeChat, or any combination
 2. **Enter credentials** — the wizard explains exactly where to get each token, which settings to enable, and what permissions to grant
-3. **Set defaults** — working directory, model, and mode
+3. **Set defaults** — provider (`codebuddy` / `claude` / `codex`), working directory, model, and mode
 4. **Validate** — tokens are verified against platform APIs immediately
 
 ### 2. Start
@@ -228,11 +228,11 @@ All commands are run inside Claude Code or Codex:
 | `/claude-to-im setup` | "claude-to-im setup" / "配置" | Interactive setup wizard |
 | `/claude-to-im start` | "start bridge" / "启动桥接" | Start the bridge daemon |
 | `/claude-to-im stop` | "stop bridge" / "停止桥接" | Stop the bridge daemon |
-| `/claude-to-im status` | "bridge status" / "状态" | Show daemon status |
+| `/claude-to-im status` | "bridge status" / "状态" | Show daemon status, resolved provider, and fallback state |
 | `/claude-to-im logs` | "查看日志" | Show last 50 log lines |
 | `/claude-to-im logs 200` | "logs 200" | Show last 200 log lines |
 | `/claude-to-im reconfigure` | "reconfigure" / "修改配置" | Update config interactively |
-| `/claude-to-im doctor` | "doctor" / "诊断" | Diagnose issues |
+| `/claude-to-im doctor` | "doctor" / "诊断" | Diagnose issues and explain the actual provider chain |
 
 ## Platform Setup Guides
 

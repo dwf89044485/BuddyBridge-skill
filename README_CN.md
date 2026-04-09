@@ -10,14 +10,14 @@
 
 ## 工作原理
 
-本 Skill 运行一个后台守护进程，将你的 IM 机器人连接到 Claude Code 或 Codex 会话。来自 IM 的消息被转发给 AI 编程代理，响应（包括工具调用、权限请求、流式预览）会发回到聊天中。
+本 Skill 运行一个后台守护进程，将你的 IM 机器人连接到 CodeBuddy / Claude / Codex 会话。来自 IM 的消息被转发给 AI 编程代理，响应（包括工具调用、权限请求、流式预览）会发回到聊天中。
 
 ```
 你 (Telegram/Discord/飞书/QQ/微信)
   ↕ Bot API
 后台守护进程 (Node.js)
-  ↕ Claude Agent SDK 或 Codex SDK（通过 CTI_RUNTIME 配置）
-Claude Code / Codex → 读写你的代码库
+  ↕ CodeBuddy / Claude / Codex 运行链（通过 CTI_RUNTIME 配置）
+CodeBuddy / Claude Code / Codex → 读写你的代码库
 ```
 
 ## 功能特点
@@ -33,9 +33,9 @@ Claude Code / Codex → 读写你的代码库
 ## 前置要求
 
 - **Node.js >= 20**
-- **Claude Code CLI**（`CTI_RUNTIME=claude` 或 `auto` 时需要）— 已安装并完成认证（`claude` 命令可用）
-- **CodeBuddy CLI**（`CTI_RUNTIME=codebuddy` 或 `auto` 时需要）— 已安装并可执行（默认命令 `codebuddy`，兼容 `cbc`）
-- **Codex CLI**（`CTI_RUNTIME=codex` 或 `auto` 时需要）— `npm install -g @openai/codex`。鉴权：运行 `codex auth login`，或设置 `OPENAI_API_KEY`（可选，API 模式）
+- **CodeBuddy CLI**（`CTI_RUNTIME=codebuddy` 的默认推荐路径）— 已安装并可执行（默认命令 `codebuddy`，兼容 `cbc`）
+- **Claude Code CLI**（`CTI_RUNTIME=claude` 时需要；同时也是 `codebuddy` 链路中的回退项）— 已安装并完成认证（`claude` 命令可用）
+- **Codex CLI**（`CTI_RUNTIME=codex` 时需要；同时也是 `codebuddy` / `claude` 链路中的最终回退项）— `npm install -g @openai/codex`。鉴权：运行 `codex auth login`，或设置 `OPENAI_API_KEY`（可选，API 模式）
 
 ## 安装
 
@@ -194,7 +194,7 @@ claude-to-im setup
 
 1. **选择渠道** — 选择 Telegram、Discord、飞书、QQ、微信，或任意组合
 2. **输入凭据** — 向导会详细说明如何获取每个 token、需要开启哪些设置、授予哪些权限
-3. **设置默认值** — 工作目录、模型、模式
+3. **设置默认值** — provider（`codebuddy` / `claude` / `codex`）、工作目录、模型、模式
 4. **验证** — 立即通过平台 API 验证 token 有效性
 
 ### 2. 启动
@@ -228,11 +228,11 @@ start bridge
 | `/claude-to-im setup` | "claude-to-im setup" / "配置" | 交互式配置向导 |
 | `/claude-to-im start` | "start bridge" / "启动桥接" | 启动桥接守护进程 |
 | `/claude-to-im stop` | "stop bridge" / "停止桥接" | 停止守护进程 |
-| `/claude-to-im status` | "bridge status" / "状态" | 查看运行状态 |
+| `/claude-to-im status` | "bridge status" / "状态" | 查看运行状态、实际 provider 与 fallback 状态 |
 | `/claude-to-im logs` | "查看日志" | 查看最近 50 行日志 |
 | `/claude-to-im logs 200` | "logs 200" | 查看最近 200 行日志 |
 | `/claude-to-im reconfigure` | "reconfigure" / "修改配置" | 交互式修改配置 |
-| `/claude-to-im doctor` | "doctor" / "诊断" | 诊断问题 |
+| `/claude-to-im doctor` | "doctor" / "诊断" | 诊断问题并说明实际 provider 链路 |
 
 ## 平台配置指南
 

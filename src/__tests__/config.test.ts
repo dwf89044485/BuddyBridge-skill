@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { maskSecret, configToSettings, type Config } from '../config.js';
+import { maskSecret, configToSettings, normalizeRuntime, type Config } from '../config.js';
 
 // ── maskSecret ──
 
@@ -21,6 +21,25 @@ describe('maskSecret', () => {
 
   it('handles exactly 5 chars', () => {
     assert.equal(maskSecret('12345'), '*2345');
+  });
+});
+
+describe('normalizeRuntime', () => {
+  it('keeps supported product runtimes', () => {
+    assert.equal(normalizeRuntime('codebuddy'), 'codebuddy');
+    assert.equal(normalizeRuntime('claude'), 'claude');
+    assert.equal(normalizeRuntime('codex'), 'codex');
+  });
+
+  it('maps legacy runtime values to new product semantics', () => {
+    assert.equal(normalizeRuntime('codebuddysdk'), 'codebuddy');
+    assert.equal(normalizeRuntime('auto'), 'codebuddy');
+    assert.equal(normalizeRuntime('persistent-claude'), 'claude');
+  });
+
+  it('defaults unknown values to codebuddy', () => {
+    assert.equal(normalizeRuntime(undefined), 'codebuddy');
+    assert.equal(normalizeRuntime('weird-runtime'), 'codebuddy');
   });
 });
 

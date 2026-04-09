@@ -3,6 +3,7 @@ set -euo pipefail
 CTI_HOME="${CTI_HOME:-$HOME/.claude-to-im}"
 CONFIG_FILE="$CTI_HOME/config.env"
 PID_FILE="$CTI_HOME/runtime/bridge.pid"
+STATUS_FILE="$CTI_HOME/runtime/status.json"
 LOG_FILE="$CTI_HOME/logs/bridge.log"
 
 PASS=0
@@ -37,15 +38,57 @@ get_config() {
   grep "^$1=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//' || true
 }
 
+normalize_runtime() {
+  case "${1:-}" in
+    claude|persistent-claude)
+      echo "claude"
+      ;;
+    codex)
+      echo "codex"
+      ;;
+    codebuddy|codebuddysdk|auto|"")
+      echo "codebuddy"
+      ;;
+    *)
+      echo "codebuddy"
+      ;;
+  esac
+}
+
+read_status_field() {
+  local key="$1"
+  grep -o '"'"$key"'"[[:space:]]*:[[:space:]]*"[^"]*"' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *"//;s/"$//'
+}
+
+read_status_bool() {
+  local key="$1"
+  grep -o '"'"$key"'"[[:space:]]*:[[:space:]]*\(true\|false\)' "$STATUS_FILE" 2>/dev/null | head -1 | sed 's/.*: *//'
+}
+
 # --- Read runtime setting ---
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CTI_RUNTIME=$(get_config CTI_RUNTIME)
-CTI_RUNTIME="${CTI_RUNTIME:-claude}"
-echo "Runtime: $CTI_RUNTIME"
+RAW_RUNTIME=$(get_config CTI_RUNTIME)
+CTI_RUNTIME=$(normalize_runtime "$RAW_RUNTIME")
+echo "Configured runtime: $CTI_RUNTIME"
+if [ -n "$RAW_RUNTIME" ] && [ "$RAW_RUNTIME" != "$CTI_RUNTIME" ]; then
+  echo "Raw runtime from config.env: $RAW_RUNTIME"
+fi
+if [ -f "$STATUS_FILE" ]; then
+  STATUS_RUNNING=$(read_status_bool running)
+  STATUS_PROVIDER=$(read_status_field resolvedProvider)
+  STATUS_CHAIN=$(read_status_field providerChain)
+  STATUS_PERSISTENT=$(read_status_bool usedPersistent)
+  STATUS_FALLBACK=$(read_status_bool fallbackApplied)
+  [ -n "$STATUS_RUNNING" ] && echo "Current status: $STATUS_RUNNING"
+  [ -n "$STATUS_PROVIDER" ] && echo "Resolved provider: $STATUS_PROVIDER"
+  [ -n "$STATUS_CHAIN" ] && echo "Provider chain: $STATUS_CHAIN"
+  [ -n "$STATUS_PERSISTENT" ] && echo "Persistent: $STATUS_PERSISTENT"
+  [ -n "$STATUS_FALLBACK" ] && echo "Fallback applied: $STATUS_FALLBACK"
+fi
 echo ""
 
-# --- Claude CLI available (claude/auto modes) ---
-if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
+# --- Claude CLI available (claude/codebuddy chains) ---
+if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "codebuddy" ]; then
   # Resolve CLI path matching the daemon's checkCliCompatibility logic:
   #   - Version >= 2.x AND all required flags present
   #   - Skip candidates that fail either check (same as resolveClaudeCliPath)
@@ -214,13 +257,13 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
     if [ "$CTI_RUNTIME" = "claude" ]; then
       check "Claude SDK cli.js exists (not found — run 'npm install' in $SKILL_DIR)" 1
     else
-      check "Claude SDK cli.js exists (not found — OK for auto/codex mode)" 0
+      check "Claude SDK cli.js exists (not found — OK unless Claude fallback is needed)" 0
     fi
   fi
 fi
 
-# --- CodeBuddy checks (codebuddy/codebuddysdk modes) ---
-if [ "$CTI_RUNTIME" = "codebuddy" ] || [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
+# --- CodeBuddy checks (codebuddy chain) ---
+if [ "$CTI_RUNTIME" = "codebuddy" ]; then
   CODEBUDDY_PATH=""
   CTI_CODEBUDDY_EXECUTABLE=$(get_config CTI_CODEBUDDY_EXECUTABLE)
 
@@ -254,7 +297,7 @@ if [ "$CTI_RUNTIME" = "codebuddy" ] || [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
     check "CodeBuddy CLI available (not found in PATH)" 1
   fi
 
-  if [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
+  if [ "$CTI_RUNTIME" = "codebuddy" ]; then
     CODEBUDDY_SDK="$SKILL_DIR/node_modules/@tencent-ai/agent-sdk"
     if [ -d "$CODEBUDDY_SDK" ]; then
       check "@tencent-ai/agent-sdk installed" 0
@@ -264,8 +307,8 @@ if [ "$CTI_RUNTIME" = "codebuddy" ] || [ "$CTI_RUNTIME" = "codebuddysdk" ]; then
   fi
 fi
 
-# --- Codex checks (codex/auto modes) ---
-if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
+# --- Codex checks (all configured chains eventually fallback to Codex) ---
+if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "codebuddy" ]; then
   if command -v codex &>/dev/null; then
     CODEX_VER=$(codex --version 2>/dev/null || echo "unknown")
     check "Codex CLI available (${CODEX_VER})" 0
@@ -273,7 +316,7 @@ if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
     if [ "$CTI_RUNTIME" = "codex" ]; then
       check "Codex CLI available (not found in PATH)" 1
     else
-      check "Codex CLI available (not found — will use Claude)" 0
+      check "Codex CLI available (not found — needed only if prior providers fail)" 0
     fi
   fi
 
@@ -285,7 +328,7 @@ if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
     if [ "$CTI_RUNTIME" = "codex" ]; then
       check "@openai/codex-sdk installed (not found — run 'npm install' in $SKILL_DIR)" 1
     else
-      check "@openai/codex-sdk installed (not found — OK for auto/claude mode)" 0
+      check "@openai/codex-sdk installed (not found — OK unless Codex fallback is needed)" 0
     fi
   fi
 

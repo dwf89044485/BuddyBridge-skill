@@ -1,14 +1,15 @@
 ---
 name: claude-to-im
 description: |
-  Bridge THIS Claude Code or Codex session to Telegram, Discord, Feishu/Lark, QQ, or WeChat so the
-  user can chat with Claude from their phone. Use for: setting up, starting, stopping,
-  or diagnosing the claude-to-im bridge daemon; forwarding Claude replies to a messaging
-  app; any phrase like "claude-to-im", "bridge", "消息推送", "消息转发", "桥接",
-  "连上飞书", "手机上看claude", "启动后台服务", "诊断", "查看日志", "配置".
-  Subcommands: setup, start, stop, restart, status, logs, reconfigure, doctor.
-  Do NOT use for: building standalone bots, webhook integrations, or coding with IM
-  platform SDKs — those are regular programming tasks.
+  将当前 Claude Code 或 Codex 会话桥接到 Telegram、Discord、Feishu/Lark、QQ 或微信（WeChat），
+  让用户可以直接在手机上与 Claude 对话。适用场景：安装配置、启动、停止、
+  重启或诊断 claude-to-im bridge 守护进程；把 Claude 的回复转发到消息应用；
+  以及任何类似"claude-to-im""bridge""消息推送""消息转发""桥接"
+  "连上飞书""手机上看 claude""启动后台服务""诊断""查看日志""配置""帮我接微信"
+  的表达。
+  可用子命令：setup、start、stop、restart、status、logs、reconfigure、doctor。
+  不适用场景：开发独立机器人、Webhook 集成、或直接编写 IM 平台 SDK 代码——
+  这些都属于常规编程任务。
 argument-hint: "setup | start | stop | restart | status | logs [N] | reconfigure | doctor"
 allowed-tools:
   - Bash
@@ -20,187 +21,202 @@ allowed-tools:
   - Glob
 ---
 
-# Claude-to-IM Bridge Skill
+# Claude-to-IM 桥接技能
 
-You are managing the Claude-to-IM bridge.
-User data is stored at `~/.claude-to-im/`.
+你正在管理 Claude-to-IM bridge。
+用户数据保存在 `~/.claude-to-im/`。
 
-The skill directory (SKILL_DIR) is at `~/.claude/skills/claude-to-im`.
-In Codex installs it may instead be `~/.codex/skills/Claude-to-IM-skill`.
-If neither path exists, fall back to Glob with pattern `**/skills/**/claude-to-im/SKILL.md` or `**/skills/**/Claude-to-IM-skill/SKILL.md` and derive the root from the result.
+技能目录（`SKILL_DIR`）位于 `~/.claude/skills/claude-to-im`。
+在 Codex 安装环境中，该路径可能为 `~/.codex/skills/Claude-to-IM-skill`。
+如果两个路径都不存在，则回退使用 Glob 搜索 `**/skills/**/claude-to-im/SKILL.md` 或 `**/skills/**/Claude-to-IM-skill/SKILL.md`，并据此推导根目录。
 
-## Command parsing
+## 命令解析
 
-Parse the user's intent from `$ARGUMENTS` into one of these subcommands:
+根据 `$ARGUMENTS` 中的用户意图，将其解析为以下子命令之一：
 
-| User says (examples) | Subcommand |
+| 用户说法（示例） | 子命令 |
 |---|---|
-| `setup`, `configure`, `配置`, `我想在飞书上用 Claude`, `帮我连接 Telegram`, `帮我接微信` | setup |
-| `start`, `start bridge`, `启动`, `启动桥接` | start |
-| `stop`, `stop bridge`, `停止`, `停止桥接` | stop |
-| `restart`, `restart bridge`, `重启`, `重启桥接` | restart |
-| `status`, `bridge status`, `状态`, `运行状态`, `怎么看桥接的运行状态` | status |
-| `logs`, `logs 200`, `查看日志`, `查看日志 200` | logs |
-| `reconfigure`, `修改配置`, `帮我改一下 token`, `换个 bot` | reconfigure |
-| `doctor`, `diagnose`, `诊断`, `挂了`, `没反应了`, `bot 没反应`, `出问题了` | doctor |
+| `setup`、`configure`、`配置`、`我想在飞书上用 Claude`、`帮我连接 Telegram`、`帮我接微信` | setup |
+| `start`、`start bridge`、`启动`、`启动桥接` | start |
+| `stop`、`stop bridge`、`停止`、`停止桥接` | stop |
+| `restart`、`restart bridge`、`重启`、`重启桥接` | restart |
+| `status`、`bridge status`、`状态`、`运行状态`、`怎么看桥接的运行状态` | status |
+| `logs`、`logs 200`、`查看日志`、`查看日志 200` | logs |
+| `reconfigure`、`修改配置`、`帮我改一下 token`、`换个 bot` | reconfigure |
+| `doctor`、`diagnose`、`诊断`、`挂了`、`没反应了`、`bot 没反应`、`出问题了` | doctor |
 
-**Disambiguation: `status` vs `doctor`** — Use `status` when the user just wants to check if the bridge is running (informational). Use `doctor` when the user reports a problem or suspects something is broken (diagnostic). When in doubt and the user describes a symptom (e.g., "没反应了", "挂了"), prefer `doctor`.
+**区分 `status` 与 `doctor`** —— 当用户只是想查看 bridge 是否在运行时，用 `status`（信息查询）；当用户明确反馈有问题、怀疑系统异常时，用 `doctor`（诊断模式）。如果拿不准，但用户描述了症状（例如"没反应了""挂了"），优先使用 `doctor`。
 
-Extract optional numeric argument for `logs` (default 50).
+对 `logs` 提取可选数字参数；默认值为 `50`。
 
-Before asking users for any platform credentials, read `SKILL_DIR/references/setup-guides.md` internally so you know where to find each credential. Do NOT dump the full guide to the user upfront — only mention the specific next step they need to do (e.g., "Go to https://open.feishu.cn → your app → Credentials to find the App ID"). If the user says they don't know how, then show the relevant section of the guide.
+在向用户索取任何平台凭据之前，先在内部读取 `SKILL_DIR/references/setup-guides.md`，以便知道每个凭据应从哪里获取。**不要**一开始就把整份指南直接发给用户；只提示他们当前下一步需要去做什么（例如："去 https://open.feishu.cn → 你的应用 → Credentials 找 App ID"）。只有当用户表示不会操作或主动求助时，才展示指南里的相关片段。
 
-## Runtime detection
+## 运行环境识别
 
-Before executing any subcommand, detect which environment you are running in:
+执行任何子命令前，先判断当前所处环境：
 
-1. **Claude Code** — `AskUserQuestion` tool is available. Use it for interactive setup wizards.
-2. **Codex / other** — `AskUserQuestion` is NOT available. Fall back to non-interactive guidance: explain the steps, show `SKILL_DIR/config.env.example`, and ask the user to create `~/.claude-to-im/config.env` manually.
+1. **Claude Code** —— 可用 `AskUserQuestion` 工具。应使用它来进行交互式配置向导。
+2. **Codex / 其他环境** —— `AskUserQuestion` 不可用。此时退回为非交互式引导：解释步骤、展示 `SKILL_DIR/config.env.example`，并要求用户手动创建 `~/.claude-to-im/config.env`。
 
-You can test this by checking if AskUserQuestion is in your available tools list.
+可通过检查可用工具列表中是否存在 `AskUserQuestion` 来判断。
 
-## Config check (applies to `start`, `stop`, `restart`, `status`, `logs`, `reconfigure`, `doctor`)
+## 配置检查（适用于 `start`、`stop`、`restart`、`status`、`logs`、`reconfigure`、`doctor`）
 
-Before running any subcommand other than `setup`, check if `~/.claude-to-im/config.env` exists:
+执行除 `setup` 以外的任意子命令前，先检查 `~/.claude-to-im/config.env` 是否存在：
 
-- **If it does NOT exist:**
-  - In Claude Code: tell the user "No configuration found" and automatically start the `setup` wizard using AskUserQuestion.
-  - In Codex: tell the user "No configuration found. Please create `~/.claude-to-im/config.env` based on the example:" then show the contents of `SKILL_DIR/config.env.example` and stop. Don't attempt to start the daemon — without config.env the process will crash on startup and leave behind a stale PID file that blocks future starts.
-- **If it exists:** proceed with the requested subcommand.
+- **如果不存在：**
+  - 在 Claude Code 中：告诉用户"未找到配置"，并自动通过 `AskUserQuestion` 启动 `setup` 向导。
+  - 在 Codex 中：告诉用户"未找到配置。请根据示例创建 `~/.claude-to-im/config.env`："然后展示 `SKILL_DIR/config.env.example` 的内容并停止执行。不要尝试启动守护进程——缺少 `config.env` 时，进程会在启动时崩溃，并遗留阻塞后续启动的陈旧 PID 文件。
+- **如果存在：**继续执行用户请求的子命令。
 
-## Subcommands
+## 子命令
 
 ### `setup`
 
-Run an interactive setup wizard. This subcommand requires `AskUserQuestion`. If it is not available (Codex environment), instead show the contents of `SKILL_DIR/config.env.example` with field-by-field explanations and instruct the user to create the config file manually.
+运行交互式配置向导。该子命令依赖 `AskUserQuestion`。如果当前环境无法使用它（例如 Codex），则改为展示 `SKILL_DIR/config.env.example` 的内容，并逐字段解释，再指导用户手动创建配置文件。
 
-When AskUserQuestion IS available, collect input **one field at a time**. After each answer, confirm the value back to the user (masking secrets to last 4 chars only) before moving to the next question.
+当 `AskUserQuestion` **可用** 时，按**一次只收集一个字段**的方式提问。每次得到回答后，都先向用户确认一遍该值（敏感信息只显示后 4 位），再继续下一个问题。
 
-**Step 1 — Choose channels**
+**第 1 步 —— 选择渠道**
 
-Ask which channels to enable (telegram, discord, feishu, qq, weixin). Accept comma-separated input. Briefly describe each:
-- **telegram** — Best for personal use. Streaming preview, inline permission buttons.
-- **discord** — Good for team use. Server/channel/user-level access control.
-- **feishu** (Lark) — For Feishu/Lark teams. Streaming cards, tool progress, inline permission buttons.
-- **qq** — QQ C2C private chat only. No inline permission buttons, no streaming preview. Permissions use text `/perm ...` commands.
-- **weixin** — WeChat QR login. Single linked account only; a new login replaces the previous one. No inline permission buttons, no streaming preview. Permissions use text `/perm ...` commands or quick `1/2/3` replies. Voice messages only use WeChat's own speech-to-text text; raw voice audio is not transcribed by the bridge.
+询问用户要启用哪些渠道（`telegram`、`discord`、`feishu`、`qq`、`weixin`）。接受逗号分隔输入。对每个渠道做一句简短说明：
+- **telegram** —— 适合个人使用。支持流式预览、内联权限按钮。
+- **discord** —— 适合团队使用。支持服务器 / 频道 / 用户三级访问控制。
+- **feishu**（Lark）—— 适用于飞书 / Lark 团队。支持流式卡片、工具进度、内联权限按钮。
+- **qq** —— 仅支持 QQ C2C 私聊。不支持内联权限按钮，也不支持流式预览。权限通过文本 `/perm ...` 命令管理。
+- **weixin** —— 微信扫码登录。同一时间只能绑定一个微信账号；重新登录会替换之前的绑定。不支持内联权限按钮，也不支持流式预览。权限通过文本 `/perm ...` 命令或快捷 `1/2/3` 回复管理。语音消息只接受微信自带语音转文字的结果；bridge 不会自行转录原始语音音频。
 
-**Step 2 — Collect tokens per channel**
+**第 2 步 —— 按渠道采集凭据**
 
-For each enabled channel, collect one credential at a time. Tell the user where to find each value in one sentence. Only show the full guide section (from `SKILL_DIR/references/setup-guides.md`) if the user asks for help or says they don't know how:
+对每个启用的渠道，**一次只采集一个凭据字段**。每次提问时，用一句话告诉用户该值去哪里找。只有在用户主动求助或表示不会时，才展示 `SKILL_DIR/references/setup-guides.md` 中对应的完整指南片段：
 
-- **Telegram**: Bot Token → confirm (masked) → Chat ID (see guide for how to get it) → confirm → Allowed User IDs (optional). **Important:** At least one of Chat ID or Allowed User IDs must be set, otherwise the bot will reject all messages.
-- **Discord**: Bot Token → confirm (masked) → Allowed User IDs → Allowed Channel IDs (optional) → Allowed Guild IDs (optional). **Important:** At least one of Allowed User IDs or Allowed Channel IDs must be set, otherwise the bot will reject all messages (default-deny).
-- **Feishu**: App ID → confirm → App Secret → confirm (masked) → Domain (optional) → Allowed User IDs (optional). After collecting credentials, explain the two-phase setup the user must complete:
-  - **Phase 1** (before starting bridge): (A) batch-add permissions, (B) enable bot capability, (C) publish first version + admin approve. This makes permissions and bot effective.
-  - **Phase 2** (requires running bridge): (D) run `/claude-to-im start`, (E) configure events (`im.message.receive_v1`) and callback (`card.action.trigger`) with long connection mode, (F) publish second version + admin approve.
-  - **Why two phases:** Feishu validates WebSocket connection when saving event subscription — if the bridge isn't running, saving will fail. The bridge needs published permissions to connect.
-  - Keep this to a short checklist — show the full guide only if asked.
-- **QQ**: Collect two required fields, then optional ones:
-  1. QQ App ID (required) → confirm
-  2. QQ App Secret (required) → confirm (masked)
-  - Tell the user: these two values can be found at https://q.qq.com/qqbot/openclaw
-  3. Allowed User OpenIDs (optional, press Enter to skip) — note: this is `user_openid`, NOT QQ number. If the user doesn't have openid yet, they can leave it empty.
-  4. Image Enabled (optional, default true, press Enter to skip) — if the underlying provider doesn't support image input, set to false
-  5. Max Image Size MB (optional, default 20, press Enter to skip)
-  - Remind user: QQ first version only supports C2C private chat sandbox access. No group/channel support, no inline buttons, no streaming preview.
-- **Weixin**: Do not ask for a static token. Instead:
-  1. Tell the user this channel uses QR login, not manual credential entry.
-  2. Run `cd SKILL_DIR && npm run weixin:login`
-  3. The helper writes `~/.claude-to-im/runtime/weixin-login.html` and tries to open it automatically in the local browser.
-  4. If auto-open fails, tell the user to open that HTML file manually and scan the QR code with WeChat.
-  5. Wait for the helper to report success, then confirm that the linked account was saved locally.
-  - Explain briefly: the linked Weixin account is stored in `~/.claude-to-im/data/weixin-accounts.json`. Running the helper again replaces the previously linked account.
-  - Explain briefly: `CTI_WEIXIN_MEDIA_ENABLED` only controls inbound image/file/video downloads. For voice messages, the bridge only accepts the text returned by WeChat's built-in speech-to-text. If WeChat does not provide a transcript, the bridge replies with an error instead of downloading/transcribing raw audio.
+- **Telegram**：Bot Token → 确认（脱敏）→ Chat ID（获取方式见指南）→ 确认 → Allowed User IDs（可选）。**重要：** Chat ID 和 Allowed User IDs 至少要设置一个，否则机器人会拒绝所有消息。
+- **Discord**：Bot Token → 确认（脱敏）→ Allowed User IDs → Allowed Channel IDs（可选）→ Allowed Guild IDs（可选）。**重要：** Allowed User IDs 和 Allowed Channel IDs 至少要设置一个，否则机器人会按默认拒绝策略丢弃所有消息。
+- **Feishu**：App ID → 确认 → App Secret → 确认（脱敏）→ Domain（可选）→ Allowed User IDs（可选）。收集完凭据后，要向用户说明其必须完成的两阶段配置：
+  - **阶段 1**（启动 bridge 前完成）：(A) 批量添加权限，(B) 启用机器人能力，(C) 发布首个版本并等待管理员审批。这样权限和 bot 才会真正生效。
+  - **阶段 2**（必须在 bridge 运行时完成）：(D) 运行 `/claude-to-im start`，(E) 配置事件 `im.message.receive_v1` 与回调 `card.action.trigger`，并启用长连接模式，(F) 再发布第二个版本并等待管理员审批。
+  - **为什么是两阶段：** 飞书在保存事件订阅时会校验 WebSocket 连接；如果 bridge 未启动，保存会失败。而 bridge 本身又需要已发布的权限才能连接成功。
+  - 保持说明为简短 checklist；只有用户追问时才展示完整指南。
+- **QQ**：先收集两个必填项，再处理可选项：
+  1. QQ App ID（必填）→ 确认
+  2. QQ App Secret（必填）→ 确认（脱敏）
+  - 告诉用户：这两个值可在 https://q.qq.com/qqbot/openclaw 找到
+  3. Allowed User OpenIDs（可选，直接回车可跳过）—— 注意这里是 `user_openid`，**不是** QQ 号。如果用户还没有 openid，可以留空。
+  4. Image Enabled（可选，默认 `true`，直接回车可跳过）—— 如果底层 provider 不支持图片输入，则设为 `false`
+  5. Max Image Size MB（可选，默认 `20`，直接回车可跳过）
+  - 提醒用户：QQ 第一版仅支持 C2C 私聊沙箱访问；不支持群 / 频道，不支持内联按钮，也不支持流式预览。
+- **Weixin**：不需要采集静态 token，改用扫码登录流程：
+  1. 告诉用户该渠道使用微信扫码登录，而非手动填写凭据。
+  2. 执行 `cd SKILL_DIR && npm run weixin:login`
+  3. 该辅助脚本会生成 `~/.claude-to-im/runtime/weixin-login.html` 并尝试自动在本地浏览器中打开。
+  4. 如果自动打开失败，告诉用户手动打开该 HTML 文件并用微信扫描二维码。
+  5. 等待脚本报告登录成功，然后确认绑定的账号已保存到本地。
+  - 简要说明：绑定的微信账号存储在 `~/.claude-to-im/data/weixin-accounts.json`。再次运行该脚本会替换之前绑定的账号。
+  - 简要说明：`CTI_WEIXIN_MEDIA_ENABLED` 仅控制入站的图片/文件/视频下载。对于语音消息，bridge 只接受微信自带语音转文字返回的文本。如果微信未提供转写结果，bridge 会返回错误提示，而不会下载或自行转录原始音频。
 
-**Step 3 — General settings**
+**第 3 步 —— 通用设置**
 
-Ask for runtime, default working directory, model, and mode:
-- **Runtime**: `claude` (default), `codex`, `auto`
-  - `claude` — uses Claude Code CLI + Claude Agent SDK (requires `claude` CLI installed)
-  - `codex` — uses OpenAI Codex SDK (requires `codex` CLI; auth via `codex auth login` or `OPENAI_API_KEY`)
-  - `auto` — tries Claude first, falls back to Codex if Claude CLI not found
-- **Working Directory**: default `$CWD`
-- **Model** (optional): Leave blank to inherit the runtime's own default model. If the user wants to override, ask them to enter a model name. Do NOT hardcode or suggest specific model names — the available models change over time.
-- **Mode**: `code` (default), `plan`, `ask`
+依次询问 provider、默认工作目录、model 和 mode：
+- **Provider**：`codebuddy`（默认推荐）、`claude`、`codex`
+  - `codebuddy` —— 默认推荐。真实链路为：持久化 CodeBuddy → CodeBuddy SDK → 持久化 Claude → 普通 Claude → Codex
+  - `claude` —— 真实链路为：持久化 Claude → 普通 Claude → Codex
+  - `codex` —— 仅使用 Codex
+  - 不要把 `codebuddysdk`、`persistent-claude`、`auto`、`codebuddy` CLI 直连作为用户可选项展示
+- **Working Directory**：默认值为 `$CWD`
+- **Model**（可选）：
+  - 如果用户选的是 `codebuddy`，先运行 `codebuddy --help`，解析 `--model <model>` 段落中的可用模型列表，再让用户从列表里选
+  - 如果用户选的是 `claude` 或 `codex`，不要伪造模型列表；改为让用户二选一：使用默认模型（推荐）或手动输入模型名
+  - 文案中要明确：模型可用性以当前 provider/CLI/账号权限为准
+- **Mode**：`code`（默认）、`plan`、`ask`
 
-**Step 4 — Write config and validate**
+**第 4 步 —— 写入配置并校验**
 
-1. Show a final summary table with all settings (secrets masked to last 4 chars)
-2. Ask user to confirm before writing
-3. Use Bash to create directory structure: `mkdir -p ~/.claude-to-im/{data,logs,runtime,data/messages}`
-4. Use Write to create `~/.claude-to-im/config.env` with all settings in KEY=VALUE format
-5. Use Bash to set permissions: `chmod 600 ~/.claude-to-im/config.env`
-6. Validate tokens — read `SKILL_DIR/references/token-validation.md` for the exact commands and expected responses for each platform. This catches typos and wrong credentials before the user tries to start the daemon. For Weixin, a successful QR login already counts as validation.
-7. Report results with a summary table. If any validation fails, explain what might be wrong and how to fix it.
-8. On success, tell the user: "Setup complete! Run `/claude-to-im start` to start the bridge."
+1. 展示最终汇总表格，列出全部设置（敏感信息只显示后 4 位）
+2. 在写入前征求用户确认
+3. 使用 Bash 创建目录结构：`mkdir -p ~/.claude-to-im/{data,logs,runtime,data/messages}`
+4. 使用 Write 以 `KEY=VALUE` 格式创建 `~/.claude-to-im/config.env`
+5. 使用 Bash 设置权限：`chmod 600 ~/.claude-to-im/config.env`
+6. 校验 token —— 读取 `SKILL_DIR/references/token-validation.md`，使用其中给出的准确命令和预期响应对各平台凭据进行校验。这样能在用户启动守护进程前就发现拼写错误或错误凭据。对于微信渠道，成功完成扫码登录即视为校验通过。
+7. 用汇总表报告校验结果；若有任一校验失败，需要解释可能原因与修复方式。
+8. 全部成功后，告诉用户：`配置完成！运行 /claude-to-im start 启动 bridge。`
 
 ### `start`
 
-**Pre-check:** Verify `~/.claude-to-im/config.env` exists (see "Config check" above). Without it, the daemon will crash immediately and leave a stale PID file.
+**预检查：** 确认 `~/.claude-to-im/config.env` 存在（见上面的"配置检查"）。缺少它时，守护进程会立即崩溃，并留下陈旧 PID 文件。
 
-Run: `bash "SKILL_DIR/scripts/daemon.sh" start`
+执行：`bash "SKILL_DIR/scripts/daemon.sh" start`
 
-Show the output to the user. If it fails, tell the user:
-- Run `doctor` to diagnose: `/claude-to-im doctor`
-- Check recent logs: `/claude-to-im logs`
+把命令输出展示给用户。如果启动失败，告诉用户：
+- 运行 `doctor` 进行诊断：`/claude-to-im doctor`
+- 查看最近日志：`/claude-to-im logs`
 
 ### `stop`
 
-Run: `bash "SKILL_DIR/scripts/daemon.sh" stop`
+执行：`bash "SKILL_DIR/scripts/daemon.sh" stop`
 
 ### `restart`
 
-Run: `bash "SKILL_DIR/scripts/daemon.sh" restart`
+执行：`bash "SKILL_DIR/scripts/daemon.sh" restart`
 
-Stops the bridge if running, then starts it again. Useful for applying configuration changes without manually running stop then start.
+如果 bridge 正在运行，则先停止再重新启动。适用于应用配置变更，避免用户手动依次执行 stop 和 start。
 
 ### `status`
 
-Run: `bash "SKILL_DIR/scripts/daemon.sh" status`
+执行：`bash "SKILL_DIR/scripts/daemon.sh" status`
 
-**Important:** Only output what the command returns. Do NOT add any derived or inferred information such as:
-- "模型配置" or model configuration
-- Workspace type (OpenClaw, etc.)
-- Any other context from MEMORY.md or AGENTS.md
+**重要：** 只输出该命令原样返回的内容。**不要**额外补充任何推导或猜测信息，例如：
+- "模型配置"或模型相关信息
+- 工作区类型（如 OpenClaw 等）
+- 来自 `MEMORY.md` 或 `AGENTS.md` 的任何额外上下文
 
-The status output contains only: running state, PID, runId, startedAt, channels, lastExitReason.
+`status` 需要明确透传真实底层状态。除运行状态、PID、runId、startedAt、channels、lastExitReason 外，还应显示：
+- `configuredRuntime` / `runtime`：当前配置的 runtime
+- `resolvedProvider`：当前实际命中的底层 provider
+- `providerChain`：本次运行的完整 fallback 链
+- `usedPersistent`：当前是否命中持久化 provider
+- `fallbackApplied`：当前是否已经从链路首选项降级
 
 ### `logs`
 
-Extract optional line count N from arguments (default 50).
-Run: `bash "SKILL_DIR/scripts/daemon.sh" logs N`
+从参数中提取可选行数 `N`，默认值为 `50`。
+执行：`bash "SKILL_DIR/scripts/daemon.sh" logs N`
 
 ### `reconfigure`
 
-1. Read current config from `~/.claude-to-im/config.env`
-2. Show current settings in a clear table format, with all secrets masked (only last 4 chars visible)
-3. Use AskUserQuestion to ask what the user wants to change
-4. When collecting new values, tell the user where to find the value; only show the full guide from `SKILL_DIR/references/setup-guides.md` if they ask for help
-5. Update the config file atomically (write to tmp, rename)
-6. Re-validate any changed tokens
-7. Remind user: "Run `/claude-to-im restart` to apply the changes."
+1. 读取当前配置：`~/.claude-to-im/config.env`
+2. 用清晰的表格展示当前设置，所有敏感信息都要脱敏（只显示后 4 位）
+3. 使用 `AskUserQuestion` 询问用户想修改哪些项
+4. 收集新值时，告诉用户去哪里找到对应值；只有在用户求助时才展示 `SKILL_DIR/references/setup-guides.md` 里的完整指南片段
+5. 以原子方式更新配置文件（先写临时文件，再 rename）
+6. 对发生变更的 token 重新做校验
+7. 提醒用户：`运行 /claude-to-im restart 以应用变更。`
 
-If the user wants to switch Weixin accounts during `reconfigure`, run `cd SKILL_DIR && npm run weixin:login` again. Each successful scan replaces the previously linked local account.
+如果用户想在 `reconfigure` 过程中切换微信账号，执行 `cd SKILL_DIR && npm run weixin:login` 重新扫码。每次成功扫码都会替换之前绑定的本地账号。
 
 ### `doctor`
 
-Run: `bash "SKILL_DIR/scripts/doctor.sh"`
+执行：`bash "SKILL_DIR/scripts/doctor.sh"`
 
-Show results and suggest fixes for any failures. Common fixes:
-- SDK cli.js missing → `cd SKILL_DIR && npm install`
-- dist/daemon.mjs stale → `cd SKILL_DIR && npm run build`
-- Config missing → run `setup`
-- Weixin account missing / expired → `cd SKILL_DIR && npm run weixin:login`
-- Weixin voice message reports missing speech-to-text → enable WeChat's own voice transcription and resend; the bridge does not transcribe raw voice audio itself
+展示诊断结果，并对失败项给出修复建议。`doctor` 必须明确区分：
+- 配置想走哪条 provider 链
+- 当前实际命中的底层 provider 是什么
+- 是否命中持久化 provider
+- 是否已经发生 fallback，以及 fallback 到了哪一层
 
-For more complex issues (messages not received, permission timeouts, high memory, stale PID files), read `SKILL_DIR/references/troubleshooting.md` for detailed diagnosis steps.
+常见修复包括：
+- SDK `cli.js` 缺失 → `cd SKILL_DIR && npm install`
+- `dist/daemon.mjs` 过旧 → `cd SKILL_DIR && npm run build`
+- 缺少配置 → 运行 `setup`
+- 微信账号缺失 / 过期 → `cd SKILL_DIR && npm run weixin:login`
+- 微信语音消息提示缺少语音转文字 → 在微信端启用自带的语音转文字功能后重新发送；bridge 不会自行转录原始语音音频
 
-**Feishu upgrade note:** If the user upgraded from an older version of this skill and Feishu is returning permission errors (e.g. streaming cards not working, typing indicators failing, permission buttons unresponsive), the root cause is almost certainly missing permissions or callbacks in the Feishu backend. Refer the user to the "Upgrading from a previous version" section in `SKILL_DIR/references/setup-guides.md` — they need to add new scopes (`cardkit:card:write`, `cardkit:card:read`, `im:message:update`, `im:message.reactions:read`, `im:message.reactions:write_only`), add the `card.action.trigger` callback, and re-publish the app. The upgrade requires two publish cycles because adding the callback needs an active WebSocket connection (bridge must be running).
+对于更复杂的问题（例如消息收不到、权限超时、内存占用过高、PID 文件陈旧），读取 `SKILL_DIR/references/troubleshooting.md` 获取更详细的排查步骤。
 
-## Notes
+**飞书升级说明：** 如果用户是从旧版本技能升级而来，并且飞书出现权限类错误（例如流式卡片不可用、typing 指示失败、权限按钮无响应），根因几乎肯定是飞书后台缺少新权限或回调配置。应引导用户查看 `SKILL_DIR/references/setup-guides.md` 中的"Upgrading from a previous version"章节——他们需要补充新的 scopes（`cardkit:card:write`、`cardkit:card:read`、`im:message:update`、`im:message.reactions:read`、`im:message.reactions:write_only`）、新增 `card.action.trigger` 回调，并重新发布应用。升级需要经历两次发布，因为新增回调时必须有可用的 WebSocket 连接（即 bridge 必须先运行）。
 
-- Always mask secrets in output (show only last 4 characters) — users often share terminal output in bug reports, so exposed tokens would be a security incident.
-- Always check for config.env before starting the daemon — without it the process crashes on startup and leaves a stale PID file that blocks future starts (requiring manual cleanup).
-- The daemon runs as a background Node.js process managed by platform supervisor (launchd on macOS, setsid on Linux, WinSW/NSSM on Windows).
-- Config persists at `~/.claude-to-im/config.env` — survives across sessions.
+## 说明
+
+- 输出中始终要对敏感信息做脱敏（只显示后 4 位）——用户经常会把终端输出贴到 bug 报告里，泄露 token 会构成安全事故。
+- 启动守护进程前，始终先检查 `config.env` 是否存在——否则进程会在启动时崩溃，并留下阻塞后续启动的陈旧 PID 文件（需要人工清理）。
+- 守护进程以后台 Node.js 进程方式运行，并由平台级 supervisor 管理（macOS 用 launchd，Linux 用 setsid，Windows 用 WinSW/NSSM）。
+- 配置持久保存在 `~/.claude-to-im/config.env`，跨会话保留。

@@ -11,6 +11,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { LLMProvider, StreamChatParams, FileAttachment } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from './permission-gateway.js';
+import { normalizeRuntime } from './config.js';
 
 import { sseEvent } from './sse-utils.js';
 
@@ -112,24 +113,23 @@ export function buildSubprocessEnv(): Record<string, string> {
       // Pass through CTI_* so skill config is available
       if (k.startsWith('CTI_')) { out[k] = v; continue; }
     }
-    // Always pass through ANTHROPIC_* in claude/auto runtime —
-    // third-party API providers need these to reach the CLI subprocess.
-    const runtime = process.env.CTI_RUNTIME || 'claude';
-    if (runtime === 'claude' || runtime === 'auto') {
+    // Always pass through ANTHROPIC_* when Claude may be used in the runtime chain.
+    const runtime = normalizeRuntime(process.env.CTI_RUNTIME);
+    if (runtime === 'claude' || runtime === 'codebuddy') {
       for (const [k, v] of Object.entries(process.env)) {
         if (v !== undefined && k.startsWith('ANTHROPIC_')) out[k] = v;
       }
     }
 
-    // In codex/auto mode, pass through OPENAI_* / CODEX_* env vars
-    if (runtime === 'codex' || runtime === 'auto') {
+    // Pass through OPENAI_* / CODEX_* when Codex may be used in the runtime chain.
+    if (runtime === 'codex' || runtime === 'claude' || runtime === 'codebuddy') {
       for (const [k, v] of Object.entries(process.env)) {
         if (v !== undefined && (k.startsWith('OPENAI_') || k.startsWith('CODEX_'))) out[k] = v;
       }
     }
 
-    // In codebuddy runtime, pass through CODEBUDDY_* env vars
-    if (runtime === 'codebuddy' || runtime === 'codebuddysdk') {
+    // In codebuddy runtime, pass through CODEBUDDY_* env vars.
+    if (runtime === 'codebuddy') {
       for (const [k, v] of Object.entries(process.env)) {
         if (v !== undefined && k.startsWith('CODEBUDDY_')) out[k] = v;
       }
