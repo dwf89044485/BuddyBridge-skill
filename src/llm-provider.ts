@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { LLMProvider, StreamChatParams, FileAttachment } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from './permission-gateway.js';
 import { normalizeRuntime } from './config.js';
@@ -473,8 +473,7 @@ export class SDKLLMProvider implements LLMProvider {
               model,
               resume: params.sdkSessionId || undefined,
               abortController: params.abortController,
-              permissionMode: (params.permissionMode as 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan') || undefined,
-              allowDangerouslySkipPermissions: params.permissionMode === 'bypassPermissions' ? true : undefined,
+              permissionMode: (params.permissionMode as 'default' | 'acceptEdits' | 'plan') || undefined,
               includePartialMessages: true,
               env: cleanEnv,
               stderr: (data: string) => {
@@ -508,7 +507,7 @@ export class SDKLLMProvider implements LLMProvider {
                   const result = await pendingPerms.waitFor(opts.toolUseID);
 
                   if (result.behavior === 'allow') {
-                    return { behavior: 'allow' as const, updatedInput: input };
+                    return { behavior: 'allow' as const, updatedInput: input, updatedPermissions: result.updatedPermissions as PermissionUpdate[] | undefined };
                   }
                   return {
                     behavior: 'deny' as const,

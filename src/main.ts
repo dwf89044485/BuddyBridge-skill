@@ -294,7 +294,7 @@ async function main(): Promise<void> {
   console.log(`[claude-to-im] Provider chain: ${resolution.providerChain.join(' -> ')}`);
 
   const gateway = {
-    resolvePendingPermission: (id: string, resolution: { behavior: 'allow' | 'deny'; message?: string }) =>
+    resolvePendingPermission: (id: string, resolution: { behavior: 'allow' | 'deny'; message?: string; updatedPermissions?: unknown[] }) =>
       pendingPerms.resolve(id, resolution),
   };
 

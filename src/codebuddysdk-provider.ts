@@ -1,8 +1,9 @@
 import { query } from '@tencent-ai/agent-sdk';
-import type { Message, PermissionResult } from '@tencent-ai/agent-sdk';
+import type { Message, PermissionResult, PermissionUpdate } from '@tencent-ai/agent-sdk';
 import type { LLMProvider, StreamChatParams } from 'claude-to-im/src/lib/bridge/host.js';
 import type { PendingPermissions } from './permission-gateway.js';
 
+import { randomUUID } from 'node:crypto';
 import { buildSubprocessEnv } from './llm-provider.js';
 import { resolveCodeBuddyCliPath } from './codebuddy-provider.js';
 import { sseEvent } from './sse-utils.js';
@@ -65,8 +66,8 @@ const SUPPORTED_IMAGE_TYPES = new Set<string>([
   'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
 ]);
 
-function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' {
-  if (permissionMode === 'acceptEdits' || permissionMode === 'plan' || permissionMode === 'dontAsk' || permissionMode === 'bypassPermissions') {
+function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' {
+  if (permissionMode === 'acceptEdits' || permissionMode === 'plan') {
     return permissionMode;
   }
   return 'default';
@@ -164,9 +165,7 @@ export class CodeBuddySDKProvider implements LLMProvider {
     private autoApprove = false,
   ) {
     // Resolve CLI path once at construction time, not on every streamChat() call.
-    if (!cliPath) {
-      this.cliPath = resolveCodeBuddyCliPath();
-    }
+    this.cliPath = cliPath || resolveCodeBuddyCliPath();
   }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
@@ -194,12 +193,21 @@ export class CodeBuddySDKProvider implements LLMProvider {
               return;
             }
 
+            // When sdkSessionId is present, resume that session.
+            // When empty (e.g. after /new), pass a fresh sessionId to force the CLI
+            // to create a brand-new session instead of auto-continuing the most recent
+            // session in the same working directory.
+            const hasExistingSession = !!(params.sdkSessionId && params.sdkSessionId.trim());
+            const sessionOpts = hasExistingSession
+              ? { resume: params.sdkSessionId }
+              : { sessionId: randomUUID() };
+
             const q = query({
               prompt: buildPrompt(params) as Parameters<typeof query>[0]['prompt'],
               options: {
                 cwd: params.workingDirectory,
                 model: params.model,
-                resume: params.sdkSessionId || undefined,
+                ...sessionOpts,
                 abortController: params.abortController,
                 permissionMode: mapPermissionMode(params.permissionMode),
                 includePartialMessages: true,
@@ -238,6 +246,7 @@ export class CodeBuddySDKProvider implements LLMProvider {
                     return {
                       behavior: 'allow',
                       updatedInput: input,
+                      updatedPermissions: result.updatedPermissions as PermissionUpdate[] | undefined,
                       toolUseID: opts.toolUseID,
                     };
                   }

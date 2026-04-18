@@ -155,8 +155,8 @@ export function preflightCodeBuddyCheck(cliPath: string): { ok: boolean; version
   return { ok: true, version };
 }
 
-function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' {
-  if (permissionMode === 'acceptEdits' || permissionMode === 'plan' || permissionMode === 'bypassPermissions') {
+function mapPermissionMode(permissionMode?: string): 'default' | 'acceptEdits' | 'plan' {
+  if (permissionMode === 'acceptEdits' || permissionMode === 'plan') {
     return permissionMode;
   }
   return 'default';

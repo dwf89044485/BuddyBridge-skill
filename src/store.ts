@@ -395,6 +395,7 @@ export class JsonFileStore implements BridgeStore {
         scopeKey: resolved.scopeKey,
         scopeChain: resolved.scopeChain,
         codepilotSessionId: data.codepilotSessionId,
+        sdkSessionId: data.sdkSessionId !== undefined ? data.sdkSessionId : existing.sdkSessionId,
         workingDirectory: data.workingDirectory,
         model: data.model,
         runtime: data.runtime !== undefined ? data.runtime : existing.runtime,
@@ -419,7 +420,7 @@ export class JsonFileStore implements BridgeStore {
       sdkSessionId: '',
       workingDirectory: data.workingDirectory,
       model: data.model,
-      mode: (this.settings.get('bridge_default_mode') as 'code' | 'plan' | 'ask' | 'bypass') || 'code',
+      mode: (this.settings.get('bridge_default_mode') as 'code' | 'plan' | 'ask') || 'code',
       runtime: data.runtime,
       active: true,
       createdAt: now(),
@@ -521,6 +522,24 @@ export class JsonFileStore implements BridgeStore {
       session.provider_id = providerId;
       this.persistSessions();
     }
+  }
+
+  clearSessionMessages(sessionId: string): void {
+    this.messages.set(sessionId, []);
+    this.persistMessages(sessionId);
+  }
+
+  deleteSession(sessionId: string): boolean {
+    const existed = this.sessions.has(sessionId);
+    if (existed) {
+      this.sessions.delete(sessionId);
+      this.persistSessions();
+    }
+    // Also clean up messages
+    this.messages.delete(sessionId);
+    const msgFile = path.join(MESSAGES_DIR, `${sessionId}.json`);
+    try { fs.unlinkSync(msgFile); } catch { /* file may not exist */ }
+    return existed;
   }
 
   addMessage(sessionId: string, role: string, content: string, _usage?: string | null): void {

@@ -1,11 +1,13 @@
 export interface PermissionResult {
   behavior: 'allow' | 'deny';
   message?: string;
+  updatedPermissions?: unknown[];
 }
 
 export interface PermissionResolution {
   behavior: 'allow' | 'deny';
   message?: string;
+  updatedPermissions?: unknown[];
 }
 
 export class PendingPermissions {
@@ -30,7 +32,7 @@ export class PendingPermissions {
     if (!entry) return false;
     clearTimeout(entry.timer);
     if (resolution.behavior === 'allow') {
-      entry.resolve({ behavior: 'allow' });
+      entry.resolve({ behavior: 'allow', updatedPermissions: resolution.updatedPermissions });
     } else {
       entry.resolve({ behavior: 'deny', message: resolution.message || 'Denied by user' });
     }

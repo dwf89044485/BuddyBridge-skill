@@ -191,7 +191,7 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
             });
           }
 
-          proc.onPermissionRequest = async (toolName, input, requestId) => {
+          proc.onPermissionRequest = async (toolName, input, requestId, suggestions) => {
             if (autoApprove) {
               return { behavior: 'allow', updatedInput: input };
             }
@@ -200,13 +200,13 @@ export class PersistentCodeBuddyProvider implements LLMProvider {
               permissionRequestId: requestId,
               toolName,
               toolInput: input,
-              suggestions: [],
+              suggestions: suggestions || [],
             }));
 
             try {
               const result = await pendingPerms.waitFor(requestId);
               const behavior = result.behavior === 'allow' ? 'allow' : 'deny';
-              return { behavior, updatedInput: input };
+              return { behavior, updatedInput: input, updatedPermissions: result.updatedPermissions };
             } catch {
               return { behavior: 'deny' };
             }
@@ -330,8 +330,8 @@ export function preflightPersistentCodeBuddyCheck(cliPath?: string): PreflightRe
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes('ETIMEDOUT')) {
-      // Some builds may block on --help; trust base preflight and proceed.
-      return { ok: true, cliPath: path, version: check.version };
+      // --help timed out — persistent mode is unlikely to work reliably.
+      return { ok: false, cliPath: path, error: `--help timed out: ${msg}` };
     }
     return { ok: false, cliPath: path, error: msg };
   }

@@ -1,5 +1,5 @@
 {
-  "_updated": "2026-04-08T15:34:43.367Z",
+  "_updated": "2026-04-10T12:16:27.420Z",
   "_note": "频道目录。AI 通过此文件查找其他频道的 session。以平台名和频道名为 key，sessionPath 和 imHistoryPath 均为绝对路径，可直接读取。",
   "discord": {
     "11": {
@@ -26,25 +26,25 @@
     },
     "30417479": {
       "channelId": "1478265694230417479",
-      "sessionId": "375ace8b-5d8a-4699-89d1-5b3f75d2169f",
-      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-CP/375ace8b-5d8a-4699-89d1-5b3f75d2169f.jsonl",
-      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/4828e95b-c5c9-49de-806d-7b23bb0cf481.json",
-      "parentName": null,
-      "guildName": null,
-      "isThread": false,
-      "model": "claude-opus-4.6",
-      "updatedAt": "2026-03-28T04:51:43.115Z"
-    },
-    "42595881": {
-      "channelId": "1491280879442595881",
-      "sessionId": "942e59fb-0627-4f60-b693-310c39ff5a44",
-      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/942e59fb-0627-4f60-b693-310c39ff5a44.jsonl",
-      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/f88c22d5-ef9e-4fe8-aa2f-306097b6cfbb.json",
+      "sessionId": "091650f3-289b-40c0-bbde-af39ce237cbc",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/091650f3-289b-40c0-bbde-af39ce237cbc.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/4c37a586-17ee-443e-b680-e535fbc3fdb3.json",
       "parentName": null,
       "guildName": null,
       "isThread": false,
       "model": "gpt-5.4",
-      "updatedAt": "2026-04-08T09:14:48.218Z"
+      "updatedAt": "2026-04-10T12:16:27.419Z"
+    },
+    "42595881": {
+      "channelId": "1491280879442595881",
+      "sessionId": "8c1e989f-8006-40c3-a291-5e9ba359b67d",
+      "sessionPath": "/Users/josephdeng/.codebuddy/projects/data-BuddyBridge-skill/8c1e989f-8006-40c3-a291-5e9ba359b67d.jsonl",
+      "imHistoryPath": "/Users/josephdeng/.claude-to-im/data/messages/dd853f3e-d92b-4657-b161-74f3fadb4c33.json",
+      "parentName": null,
+      "guildName": null,
+      "isThread": false,
+      "model": "minimax-m2.7",
+      "updatedAt": "2026-04-10T10:07:43.742Z"
     },
     "测试": {
       "channelId": "1484443479777214706",

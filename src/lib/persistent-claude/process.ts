@@ -9,7 +9,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { NdjsonParser } from './ndjson.js';
 import type {
   ProcessState,
@@ -58,7 +58,8 @@ export class PersistentProcess {
     toolName: string,
     input: Record<string, unknown>,
     requestId: string,
-  ) => Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }>) | null = null;
+    suggestions?: unknown[],
+  ) => Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] }>) | null = null;
 
   constructor(sessionId: string, cliPath: string) {
     this.sessionId = sessionId;
@@ -111,6 +112,11 @@ export class PersistentProcess {
 
     if (options.resumeSessionId) {
       args.push('--resume', options.resumeSessionId);
+    } else {
+      // No SDK session to resume — force a brand-new session via --session-id
+      // to prevent the CLI from auto-continuing the most recent session in the
+      // same working directory.
+      args.push('--session-id', randomUUID());
     }
 
     // Spawn
@@ -422,10 +428,12 @@ export class PersistentProcess {
           if (this.onPermissionRequest) {
             const toolName = (msg.request as { tool_name?: string }).tool_name || 'unknown';
             const toolInput = (msg.request as { input?: Record<string, unknown> }).input || {};
-            const result = await this.onPermissionRequest(toolName, toolInput, requestId);
+            const suggestions = (msg.request as { suggestions?: unknown[] }).suggestions;
+            const result = await this.onPermissionRequest(toolName, toolInput, requestId, suggestions);
             this.sendControlResponse(requestId, 'success', {
               behavior: result.behavior,
               updatedInput: result.updatedInput,
+              updatedPermissions: result.updatedPermissions,
             });
           } else {
             // No permission handler — auto-deny

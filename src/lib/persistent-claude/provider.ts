@@ -178,7 +178,7 @@ export class PersistentClaudeProvider implements LLMProvider {
           });
 
           // Wire up permission callback
-          proc.onPermissionRequest = async (toolName, input, requestId) => {
+          proc.onPermissionRequest = async (toolName, input, requestId, suggestions) => {
             // Auto-approve if configured
             if (autoApprove) {
               return { behavior: 'allow', updatedInput: input };
@@ -189,14 +189,14 @@ export class PersistentClaudeProvider implements LLMProvider {
               permissionRequestId: requestId,
               toolName,
               toolInput: input,
-              suggestions: [],
+              suggestions: suggestions || [],
             }));
 
             // Wait for IM user response via pendingPerms
             try {
               const result = await pendingPerms.waitFor(requestId);
               const behavior = result.behavior === 'allow' ? 'allow' : 'deny';
-              return { behavior, updatedInput: input };
+              return { behavior, updatedInput: input, updatedPermissions: result.updatedPermissions };
             } catch {
               return { behavior: 'deny' };
             }
